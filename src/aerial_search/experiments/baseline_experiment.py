@@ -89,7 +89,12 @@ class BaselineRecipe:
     tile_overlap: int = 0
     min_visible: float = 0.5  # train: keep a cut box if this much of it shows
     empty_ratio: float = 1.0  # train: empty tiles per tile with a person
-    frame_top_k: int = 100  # eval: boxes kept per frame; the untiled top_k
+    frame_top_k: int | None = None  # eval: boxes kept per frame; None: top_k
+
+    @property
+    def frame_cap(self) -> int:
+        """Boxes kept per frame: the untiled `top_k` unless set explicitly."""
+        return self.top_k if self.frame_top_k is None else self.frame_top_k
 
 
 def input_size(camera: str, mode: str) -> tuple[int, int] | None:
@@ -626,7 +631,7 @@ def run_baseline(
                 val,
                 device,
                 workers=recipe.workers,
-                frame_top_k=recipe.frame_top_k,
+                frame_top_k=recipe.frame_cap,
             )
             return report.overall.ap_iou25
 
@@ -638,7 +643,7 @@ def run_baseline(
             test,
             device,
             workers=recipe.workers,
-            frame_top_k=recipe.frame_top_k,
+            frame_top_k=recipe.frame_cap,
         )
         report.write_json(directory)
         history["validation_frames"] = len(val)

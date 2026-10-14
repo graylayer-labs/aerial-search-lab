@@ -179,7 +179,9 @@ class Flood(torch.nn.Module):
 def test_tiled_prediction_keeps_no_more_boxes_per_frame_than_the_untiled_cap(tmp_path):
     record = rec(FOLD, "x0", [])
     write_images(tmp_path, [record])
-    assert be.BaselineRecipe().frame_top_k == be.BaselineRecipe().top_k == 100
+    assert be.BaselineRecipe().frame_cap == be.BaselineRecipe().top_k == 100
+    assert be.BaselineRecipe(top_k=50).frame_cap == 50
+    assert be.BaselineRecipe(top_k=50, frame_top_k=20).frame_cap == 20
     frames = be.TiledFrames([record], tmp_path, SPEC)
     (prediction,) = be.predict(Flood(), frames, torch.device("cpu"))
     assert 0 < len(np.asarray(prediction.scores)) <= 100
@@ -188,12 +190,29 @@ def test_tiled_prediction_keeps_no_more_boxes_per_frame_than_the_untiled_cap(tmp
 def test_boxes_labelled_in_no_tile_are_counted_and_slivers_are_not_negatives(tmp_path):
     # A person as wide as the frame is at most 50% visible in a 32 px tile.
     wide = rec(FOLD, "w0", [box(0.5, 0.5, 1.0, 0.25)])
-    ok = rec(FOLD, "w1", [box(0.5, 0.5, 0.25, 0.25)])
+    ok = rec(FOLD, "w1", [box(0.1, 0.1, 0.1, 0.1)])  # top-left corner only
     write_images(tmp_path, [wide, ok])
     strict = be.TileSpec((32, 24), 16, min_visible=0.6, empty_ratio=2.0)
     tiles = be.TiledTrainSet([wide, ok], tmp_path, strict, seed=0)
     assert tiles.n_boxes == 2 and tiles.n_unlabelled_boxes == 1
+    empties = 0
     for r, tile, local in tiles.tiles:
         if len(local) == 0:  # an empty negative: it must not touch any box
             truth = he.record_boxes(tiles.records[r])
             assert not tiling.touches_box(truth, tile)
+            empties += 1
+    assert empties == 2  # only the corner frame has clear tiles; ratio 2.0 x 1
+
+
+def test_empty_tiles_are_sampled_from_the_clear_ones_up_to_the_ratio(tmp_path):
+    record = rec(FOLD, "c0", [box(0.1, 0.1, 0.1, 0.1)])
+    write_images(tmp_path, [record])
+    spec = be.TileSpec((32, 24), 16, min_visible=0.5, empty_ratio=2.0)
+    tiles = be.TiledTrainSet([record], tmp_path, spec, seed=0)
+    grid = tiling.tile_grid(64, 48, spec.size, spec.overlap)
+    truth = he.record_boxes(record)
+    n_positive = sum(len(tiling.boxes_in_tile(truth, t, 0.5)[1]) > 0 for t in grid)
+    clear = sum(not tiling.touches_box(truth, t) for t in grid)
+    assert n_positive >= 1 and clear > 2 * n_positive
+    empties = sum(len(local) == 0 for _, _, local in tiles.tiles)
+    assert empties == min(int(np.ceil(2.0 * n_positive)), clear)
