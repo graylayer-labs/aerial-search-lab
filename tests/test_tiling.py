@@ -102,3 +102,22 @@ def test_empty_tiles_are_subsampled_to_a_ratio_of_the_positive_tiles():
 def test_a_split_with_no_person_still_gets_some_empty_tiles():
     picks = tiling.pick_tiles([False] * 20, empty_ratio=0.5, seed=0)
     assert 0 < len(picks) <= 20
+
+
+def test_a_tile_touching_a_box_is_never_an_empty_negative():
+    has_person = [True, False, False, False, False, False]
+    touches = [True, True, False, False, False, True]  # tiles 1 and 5: slivers only
+    for seed in range(20):
+        picks = tiling.pick_tiles(
+            has_person, empty_ratio=3.0, seed=seed, touches_person=touches
+        )
+        assert 1 not in picks and 5 not in picks
+        assert picks == [0, 2, 3, 4]
+
+
+def test_touching_means_any_overlap_with_a_box():
+    tile = (0, 0, 100, 100)
+    boxes = np.array([[95.0, 10.0, 130.0, 50.0], [100.0, 0.0, 120.0, 20.0]])
+    assert tiling.touches_box(boxes, tile)
+    assert not tiling.touches_box(boxes[1:], tile)  # shares only an edge
+    assert not tiling.touches_box(np.zeros((0, 4)), tile)

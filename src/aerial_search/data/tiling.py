@@ -98,12 +98,32 @@ def merge_detections(
     return boxes[keep], scores[keep]
 
 
-def pick_tiles(has_person: Sequence[bool], empty_ratio: float, seed: int) -> list[int]:
+def touches_box(boxes: np.ndarray, tile: Tile) -> bool:
+    """True if any box overlaps the tile at all (sharing only an edge is not)."""
+    x0, y0, x1, y1 = tile
+    b = np.asarray(boxes, dtype=np.float64).reshape(-1, 4)
+    return bool(
+        ((b[:, 0] < x1) & (b[:, 2] > x0) & (b[:, 1] < y1) & (b[:, 3] > y0)).any()
+    )
+
+
+def pick_tiles(
+    has_person: Sequence[bool],
+    empty_ratio: float,
+    seed: int,
+    touches_person: Sequence[bool] | None = None,
+) -> list[int]:
     """Indices of the tiles to train on: every tile with a person, plus empty
     tiles chosen at random, `empty_ratio` of the person tiles (at least one
-    tile's worth if none have a person), in index order."""
+    tile's worth if none have a person), in index order.
+
+    A tile that touches a person (`touches_person`) without labelling them,
+    because too little of the box shows, is not a true negative and is never
+    picked as an empty one."""
+    if touches_person is None:
+        touches_person = has_person
     positive = [i for i, p in enumerate(has_person) if p]
-    empty = [i for i, p in enumerate(has_person) if not p]
+    empty = [i for i, p in enumerate(has_person) if not p and not touches_person[i]]
     wanted = math.ceil(empty_ratio * max(len(positive), 1))
     rng = np.random.default_rng(seed)
     chosen = rng.choice(empty, size=min(wanted, len(empty)), replace=False)

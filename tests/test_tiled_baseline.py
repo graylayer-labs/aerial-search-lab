@@ -66,7 +66,10 @@ def test_training_tiles_hold_clipped_boxes_and_a_share_of_empty_tiles(tmp_path):
         assert (boxes[:, [0, 2]] <= 32).all() and (boxes[:, [1, 3]] <= 24).all()
         seen += len(boxes)
     assert seen >= n_positive
-    assert len(tiles) == n_positive + int(np.ceil(0.5 * n_positive))
+    clear = sum(
+        not tiling.touches_box(truth, t) for t in grid
+    )  # tiles that can be true negatives
+    assert len(tiles) == n_positive + min(int(np.ceil(0.5 * n_positive)), clear)
 
 
 class Oracle(torch.nn.Module):
@@ -159,3 +162,38 @@ def test_a_tiled_run_scores_whole_frames_on_the_test_site_day(tmp_path, monkeypa
     assert summary["test"]["n_images"] == 3  # frames, not tiles
     run_file = tmp_path / "repo" / "outputs" / "scratch-bl-tiled" / "run.json"
     assert json.loads(run_file.read_text())["config"]["tiling"]["overlap"] == 16
+    training = json.loads((run_file.parent / "training.json").read_text())
+    assert training["train_boxes"] == 4 and training["train_boxes_unlabelled"] == 0
+
+
+class Flood(torch.nn.Module):
+    """Reports 150 separate boxes on every tile."""
+
+    def forward(self, images):
+        xs = torch.arange(150, dtype=torch.float32) * 0.2
+        boxes = torch.stack([xs, xs * 0, xs + 0.1, xs * 0 + 5], dim=1)
+        scores = torch.linspace(0.9, 0.1, 150)
+        return [{"boxes": boxes, "scores": scores} for _ in images]
+
+
+def test_tiled_prediction_keeps_no_more_boxes_per_frame_than_the_untiled_cap(tmp_path):
+    record = rec(FOLD, "x0", [])
+    write_images(tmp_path, [record])
+    assert be.BaselineRecipe().frame_top_k == be.BaselineRecipe().top_k == 100
+    frames = be.TiledFrames([record], tmp_path, SPEC)
+    (prediction,) = be.predict(Flood(), frames, torch.device("cpu"))
+    assert 0 < len(np.asarray(prediction.scores)) <= 100
+
+
+def test_boxes_labelled_in_no_tile_are_counted_and_slivers_are_not_negatives(tmp_path):
+    # A person as wide as the frame is at most 50% visible in a 32 px tile.
+    wide = rec(FOLD, "w0", [box(0.5, 0.5, 1.0, 0.25)])
+    ok = rec(FOLD, "w1", [box(0.5, 0.5, 0.25, 0.25)])
+    write_images(tmp_path, [wide, ok])
+    strict = be.TileSpec((32, 24), 16, min_visible=0.6, empty_ratio=2.0)
+    tiles = be.TiledTrainSet([wide, ok], tmp_path, strict, seed=0)
+    assert tiles.n_boxes == 2 and tiles.n_unlabelled_boxes == 1
+    for r, tile, local in tiles.tiles:
+        if len(local) == 0:  # an empty negative: it must not touch any box
+            truth = he.record_boxes(tiles.records[r])
+            assert not tiling.touches_box(truth, tile)

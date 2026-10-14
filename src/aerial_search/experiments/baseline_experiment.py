@@ -89,7 +89,7 @@ class BaselineRecipe:
     tile_overlap: int = 0
     min_visible: float = 0.5  # train: keep a cut box if this much of it shows
     empty_ratio: float = 1.0  # train: empty tiles per tile with a person
-    frame_top_k: int = 300  # eval: boxes kept per frame after merging tiles
+    frame_top_k: int = 100  # eval: boxes kept per frame; the untiled top_k
 
 
 def input_size(camera: str, mode: str) -> tuple[int, int] | None:
@@ -271,14 +271,24 @@ class TiledTrainSet(Dataset):
     ):
         self.records, self.data_root, self.spec = list(records), data_root, spec
         every: list[tuple[int, tiling.Tile, np.ndarray]] = []
+        touches: list[bool] = []
+        self.n_boxes = self.n_unlabelled_boxes = 0
         for r, record in enumerate(self.records):
             width, height = record["size"]
             truth = record_boxes(record)
+            labelled: set[int] = set()
             for tile in tiling.tile_grid(width, height, spec.size, spec.overlap):
-                local, _ = tiling.boxes_in_tile(truth, tile, spec.min_visible)
+                local, index = tiling.boxes_in_tile(truth, tile, spec.min_visible)
                 every.append((r, tile, local))
+                touches.append(tiling.touches_box(truth, tile))
+                labelled.update(int(i) for i in index)
+            self.n_boxes += len(truth)
+            self.n_unlabelled_boxes += len(truth) - len(labelled)
         picked = tiling.pick_tiles(
-            [len(local) > 0 for _, _, local in every], spec.empty_ratio, seed
+            [len(local) > 0 for _, _, local in every],
+            spec.empty_ratio,
+            seed,
+            touches,
         )
         self.tiles = [every[i] for i in picked]
         self.n_candidates = len(every)
@@ -424,7 +434,7 @@ def predict_tiled(
     *,
     batch_size: int = 8,
     workers: int = 0,
-    frame_top_k: int = 300,
+    frame_top_k: int = 100,
 ) -> list[Prediction]:
     """Detections per whole frame: each tile's boxes moved to source pixels,
     then duplicates from the overlaps merged by class-agnostic NMS."""
@@ -455,7 +465,7 @@ def predict(
     *,
     batch_size: int = 8,
     workers: int = 0,
-    frame_top_k: int = 300,
+    frame_top_k: int = 100,
 ) -> list[Prediction]:
     """Detections in source pixels (the dataset's scale undone) per frame."""
     if isinstance(frames, TiledFrames):
@@ -498,7 +508,7 @@ def evaluate(
     device: torch.device,
     *,
     workers: int = 0,
-    frame_top_k: int = 300,
+    frame_top_k: int = 100,
 ) -> DetectionReport:
     """Score on a split with the same module and camera/flight grouping as the head."""
     truths = [
@@ -635,6 +645,8 @@ def run_baseline(
         if isinstance(train, TiledTrainSet):
             history["train_tiles"] = len(train)
             history["train_tile_candidates"] = train.n_candidates
+            history["train_boxes"] = train.n_boxes
+            history["train_boxes_unlabelled"] = train.n_unlabelled_boxes
         history["test_predictions_tied"] = report.overall.n_predictions_tied
         (directory / "training.json").write_text(
             json.dumps(history, indent=2, allow_nan=True) + "\n"
