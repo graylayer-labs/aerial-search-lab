@@ -1,0 +1,25 @@
+# Calls the org PR gate (graylayer-labs/.github, org-gate.yml).
+# pull_request_target runs the gate as it is on the base branch, so a PR
+# cannot change the gate that checks it. The gate reads PR metadata through
+# the API and never checks out PR code. Required on main as "gate / gate".
+name: gate
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: graylayer-labs/.github/.github/workflows/org-gate.yml@1d7551766fb42667ac920c63ea60999b9a74c8d4 # main
