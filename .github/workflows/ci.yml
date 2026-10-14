@@ -28,3 +28,12 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ty check
       - run: uv run pytest
+
+  # The org's shared CI (graylayer-labs/.github, ci-python.yml). Reports as
+  # "checks / checks". Runs beside the inline job above until main requires
+  # "checks / checks" (#107); then the inline job is removed.
+  shared:
+    name: checks
+    permissions:
+      contents: read
+    uses: graylayer-labs/.github/.github/workflows/ci-python.yml@8c9fa19473d67349548fa516aa01fe4753e07003 # v1.0.0
