@@ -26,6 +26,7 @@ import torchvision.transforms.v2.functional as vision
 from torch.utils.data import DataLoader, Dataset
 from torchvision.io import ImageReadMode, decode_image
 
+from aerial_search.data import tiling
 from aerial_search.evaluation.detection import (
     DetectionReport,
     GroundTruth,
@@ -45,7 +46,15 @@ ARCHITECTURES = (
 # every image is stretched to this, whatever its source size. "cache" gives the
 # baseline the same pixels the head's features were computed from.
 CACHE_INPUT = {"rgb": (672, 384), "thermal": (560, 448)}
-INPUTS = ("cache", "native")
+INPUTS = ("cache", "native", "tiled")
+# Tiled input (#96): overlapping tiles of the source frame at native resolution,
+# each tile the size of the camera's cache input so the model is unchanged.
+# The overlap (pixels between neighbouring tiles) is chosen so that most people
+# are wholly inside at least one tile: RGB people are 90th percentile 104x146 px
+# and thermal 50x76 px in the fold manifests, so 160 and 96 cover them; the
+# largest boxes (RGB up to 972 px) cannot fit any overlap and are seen cut.
+TILE_OVERLAP = {"rgb": 160, "thermal": 96}
+MERGE_IOU = 0.5  # class-agnostic NMS over a stitched frame
 # Anchor sizes per feature-pyramid level (default 32 to 512): the smallest
 # people are 4 px wide at the head's input size. The number of anchors per
 # location must equal the pretrained RPN head's (a mismatch indexes the wrong
@@ -76,15 +85,48 @@ class BaselineRecipe:
     score_floor: float = 0.001  # keep low-scoring boxes: AP needs the whole curve
     workers: int = 4
     device: str = "cpu"  # MPS gave a diverged loss (docs/decisions.md)
+    # Tiled input only (#96). 0 overlap: the camera's default (TILE_OVERLAP).
+    tile_overlap: int = 0
+    min_visible: float = 0.5  # train: keep a cut box if this much of it shows
+    empty_ratio: float = 1.0  # train: empty tiles per tile with a person
+    frame_top_k: int | None = None  # eval: boxes kept per frame; None: top_k
+
+    @property
+    def frame_cap(self) -> int:
+        """Boxes kept per frame: the untiled `top_k` unless set explicitly."""
+        return self.top_k if self.frame_top_k is None else self.frame_top_k
 
 
 def input_size(camera: str, mode: str) -> tuple[int, int] | None:
     """(width, height) the images are stretched to, or None for native."""
-    if mode == "native":
+    if mode in ("native", "tiled"):
         return None
     if mode == "cache":
         return CACHE_INPUT[camera]
     raise ValueError(f"input must be one of {INPUTS}, not {mode!r}")
+
+
+@dataclass(frozen=True)
+class TileSpec:
+    """How a frame is cut into tiles, and how cut boxes are treated."""
+
+    size: tuple[int, int]  # (width, height) of a tile, source pixels
+    overlap: int
+    min_visible: float
+    empty_ratio: float
+    merge_iou: float = MERGE_IOU
+
+
+def tile_spec(camera: str, recipe: BaselineRecipe) -> TileSpec | None:
+    """The recipe's tiling, or None when the input is not tiled."""
+    if recipe.input != "tiled":
+        return None
+    return TileSpec(
+        CACHE_INPUT[camera],
+        recipe.tile_overlap or TILE_OVERLAP[camera],
+        recipe.min_visible,
+        recipe.empty_ratio,
+    )
 
 
 def subsample(records: Sequence[dict], limit: int) -> list[dict]:
@@ -213,6 +255,84 @@ class Frames(Dataset):
         return image.float() / 255, target, torch.tensor([sx, sy])
 
 
+def _decode(path: Path, record: dict) -> torch.Tensor:
+    image = decode_image(str(path), mode=ImageReadMode.RGB)
+    height, width = image.shape[-2:]
+    if [width, height] != list(record["size"]):
+        raise ValueError(
+            f"{record['image']} is {width}x{height} on disk, "
+            f"{record['size']} in the manifest"
+        )
+    return image
+
+
+class TiledTrainSet(Dataset):
+    """Training tiles of native-resolution frames: every tile showing a person
+    plus a random share of the empty ones, each with the boxes it shows
+    (clipped to the tile, kept if `min_visible` of the box is inside)."""
+
+    def __init__(
+        self, records: Sequence[dict], data_root: Path, spec: TileSpec, seed: int
+    ):
+        self.records, self.data_root, self.spec = list(records), data_root, spec
+        every: list[tuple[int, tiling.Tile, np.ndarray]] = []
+        touches: list[bool] = []
+        self.n_boxes = self.n_unlabelled_boxes = 0
+        for r, record in enumerate(self.records):
+            width, height = record["size"]
+            truth = record_boxes(record)
+            labelled: set[int] = set()
+            for tile in tiling.tile_grid(width, height, spec.size, spec.overlap):
+                local, index = tiling.boxes_in_tile(truth, tile, spec.min_visible)
+                every.append((r, tile, local))
+                touches.append(tiling.touches_box(truth, tile))
+                labelled.update(int(i) for i in index)
+            self.n_boxes += len(truth)
+            self.n_unlabelled_boxes += len(truth) - len(labelled)
+        picked = tiling.pick_tiles(
+            [len(local) > 0 for _, _, local in every],
+            spec.empty_ratio,
+            seed,
+            touches,
+        )
+        self.tiles = [every[i] for i in picked]
+        self.n_candidates = len(every)
+
+    def __len__(self) -> int:
+        return len(self.tiles)
+
+    def __getitem__(self, index: int):
+        r, (x0, y0, x1, y1), local = self.tiles[index]
+        record = self.records[r]
+        image = _decode(self.data_root / record["image"], record)[:, y0:y1, x0:x1]
+        boxes = torch.as_tensor(local, dtype=torch.float32)
+        keep = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        target = {
+            "boxes": boxes[keep],
+            "labels": torch.ones(int(keep.sum()), dtype=torch.int64),
+        }
+        return image.float() / 255, target, torch.ones(2)
+
+
+class TiledFrames(Dataset):
+    """Whole frames for scoring: each item is every tile of one frame and the
+    tiles' places in it. `predict` stitches the detections back together."""
+
+    def __init__(self, records: Sequence[dict], data_root: Path, spec: TileSpec):
+        self.records, self.data_root, self.spec = list(records), data_root, spec
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, index: int):
+        record = self.records[index]
+        image = _decode(self.data_root / record["image"], record)
+        width, height = record["size"]
+        grid = tiling.tile_grid(width, height, self.spec.size, self.spec.overlap)
+        tiles = [image[:, y0:y1, x0:x1].float() / 255 for x0, y0, x1, y1 in grid]
+        return tiles, grid
+
+
 def _collate(batch):
     return tuple(zip(*batch, strict=True))
 
@@ -250,7 +370,7 @@ def _lr_factor(step: int, recipe: BaselineRecipe) -> float:
 
 def train_baseline(
     model,
-    frames: Frames,
+    frames: Frames | TiledTrainSet,
     recipe: BaselineRecipe,
     *,
     device: torch.device,
@@ -312,15 +432,56 @@ def train_baseline(
 
 
 @torch.no_grad()
-def predict(
+def predict_tiled(
     model,
-    frames: Frames,
+    frames: TiledFrames,
     device: torch.device,
     *,
     batch_size: int = 8,
     workers: int = 0,
+    frame_top_k: int = 100,
+) -> list[Prediction]:
+    """Detections per whole frame: each tile's boxes moved to source pixels,
+    then duplicates from the overlaps merged by class-agnostic NMS."""
+    model.to(device).eval()
+    loader = DataLoader(frames, batch_size=1, num_workers=workers, collate_fn=_collate)
+    out: list[Prediction] = []
+    for n, ((tiles,), (grid,)) in enumerate(loader):
+        boxes, scores = [], []
+        for i in range(0, len(tiles), batch_size):
+            outputs = model([t.to(device) for t in tiles[i : i + batch_size]])
+            for o, tile in zip(outputs, grid[i : i + batch_size], strict=True):
+                local = o["boxes"].cpu().numpy().astype(np.float64)
+                boxes.append(tiling.to_source(local, tile))
+                scores.append(o["scores"].cpu().numpy().astype(np.float64))
+        merged, merged_scores = tiling.merge_detections(
+            np.concatenate(boxes), np.concatenate(scores), frames.spec.merge_iou
+        )
+        merged, merged_scores = merged[:frame_top_k], merged_scores[:frame_top_k]
+        out.append(Prediction(str(frames.records[n]["image"]), merged, merged_scores))
+    return out
+
+
+@torch.no_grad()
+def predict(
+    model,
+    frames: Frames | TiledFrames,
+    device: torch.device,
+    *,
+    batch_size: int = 8,
+    workers: int = 0,
+    frame_top_k: int = 100,
 ) -> list[Prediction]:
     """Detections in source pixels (the dataset's scale undone) per frame."""
+    if isinstance(frames, TiledFrames):
+        return predict_tiled(
+            model,
+            frames,
+            device,
+            batch_size=batch_size,
+            workers=workers,
+            frame_top_k=frame_top_k,
+        )
     model.to(device).eval()
     loader = DataLoader(
         frames, batch_size=batch_size, num_workers=workers, collate_fn=_collate
@@ -347,7 +508,12 @@ def predict(
 
 
 def evaluate(
-    model, frames: Frames, device: torch.device, *, workers: int = 0
+    model,
+    frames: Frames | TiledFrames,
+    device: torch.device,
+    *,
+    workers: int = 0,
+    frame_top_k: int = 100,
 ) -> DetectionReport:
     """Score on a split with the same module and camera/flight grouping as the head."""
     truths = [
@@ -356,7 +522,10 @@ def evaluate(
         )
         for r in frames.records
     ]
-    return evaluate_detections(truths, predict(model, frames, device, workers=workers))
+    predictions = predict(
+        model, frames, device, workers=workers, frame_top_k=frame_top_k
+    )
+    return evaluate_detections(truths, predictions)
 
 
 # --- one run ----------------------------------------------------------------------
@@ -409,6 +578,7 @@ def run_baseline(
     if limit_frames:
         records = {r: subsample(rs, limit_frames) for r, rs in records.items()}
     size = input_size(camera, recipe.input)
+    spec = tile_spec(camera, recipe)
     config = {
         "method": f"baseline:{recipe.arch}@{recipe.input}",
         "camera": camera,
@@ -416,6 +586,7 @@ def run_baseline(
         "percent": percent,
         "recipe": asdict(recipe),
         "input_size": size,
+        "tiling": asdict(spec) if spec else None,
         "weights": "torchvision COCO_V1",
         "images": {role: len(rs) for role, rs in records.items()},
         "limit_frames": limit_frames,
@@ -443,21 +614,44 @@ def run_baseline(
             score_floor=recipe.score_floor,
             top_k=recipe.top_k,
         )
-        train = Frames(records["train"], data_root, size)
-        val = Frames(
-            subsample(records["validation"], recipe.val_frames), data_root, size
-        )
-        test = Frames(records["test"], data_root, size)
+        val_records = subsample(records["validation"], recipe.val_frames)
+        train: Frames | TiledTrainSet
+        if spec is None:
+            train = Frames(records["train"], data_root, size)
+            val = Frames(val_records, data_root, size)
+            test = Frames(records["test"], data_root, size)
+        else:
+            train = TiledTrainSet(records["train"], data_root, spec, seed)
+            val = TiledFrames(val_records, data_root, spec)
+            test = TiledFrames(records["test"], data_root, spec)
 
         def validate() -> float:
-            return evaluate(model, val, device, workers=recipe.workers).overall.ap_iou25
+            report = evaluate(
+                model,
+                val,
+                device,
+                workers=recipe.workers,
+                frame_top_k=recipe.frame_cap,
+            )
+            return report.overall.ap_iou25
 
         history = train_baseline(
             model, train, recipe, device=device, validate=validate, seed=seed
         )
-        report = evaluate(model, test, device, workers=recipe.workers)
+        report = evaluate(
+            model,
+            test,
+            device,
+            workers=recipe.workers,
+            frame_top_k=recipe.frame_cap,
+        )
         report.write_json(directory)
         history["validation_frames"] = len(val)
+        if isinstance(train, TiledTrainSet):
+            history["train_tiles"] = len(train)
+            history["train_tile_candidates"] = train.n_candidates
+            history["train_boxes"] = train.n_boxes
+            history["train_boxes_unlabelled"] = train.n_unlabelled_boxes
         history["test_predictions_tied"] = report.overall.n_predictions_tied
         (directory / "training.json").write_text(
             json.dumps(history, indent=2, allow_nan=True) + "\n"
