@@ -363,11 +363,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=INPUTS,
         default=base_defaults.input,
         help="cache: the frozen backbone's input size (the fair row); "
-        "native: no resize",
+        "native: no resize; tiled: overlapping native-resolution tiles of the "
+        "cache's input size, boxes stitched back to source pixels (#96)",
     )
-    for name in ("steps", "batch_size", "eval_every", "val_frames", "top_k", "workers"):
+    int_flags = ("steps", "batch_size", "eval_every", "val_frames", "top_k", "workers")
+    for name in (*int_flags, "tile_overlap", "frame_top_k"):
         flag = "--" + name.replace("_", "-")
         base.add_argument(flag, type=int, default=getattr(base_defaults, name))
+    for name in ("min_visible", "empty_ratio"):
+        flag = "--" + name.replace("_", "-")
+        base.add_argument(flag, type=float, default=getattr(base_defaults, name))
     base.add_argument(
         "--learning-rate", type=float, default=base_defaults.learning_rate
     )
@@ -641,6 +646,7 @@ def main(argv: list[str] | None = None) -> None:
 
         names = ("arch", "input", "steps", "batch_size", "learning_rate")
         names += ("eval_every", "val_frames", "top_k", "workers")
+        names += ("tile_overlap", "min_visible", "empty_ratio", "frame_top_k")
         recipe = baseline_experiment.BaselineRecipe(
             **{n: getattr(args, n) for n in names}
         )
