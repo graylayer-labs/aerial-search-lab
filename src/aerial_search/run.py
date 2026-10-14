@@ -214,6 +214,62 @@ def _parent(
     return parent
 
 
+ATTESTATION_ENV = "AERIAL_SEARCH_ATTESTATION"
+JOB_ENV = "TRAINING_JOB_NAME"  # set by SageMaker in a training job
+
+
+def _attested_state(
+    start: Path, error: GitError, scratch: bool
+) -> dict[str, Any] | None:
+    """The code's state inside a SageMaker job, which has no `.git`.
+
+    The launcher checked the tree and `origin/main` on the laptop and sent the
+    commit and a digest of the archive it made from that commit
+    (`aerial_search.cloud`). Here the digest of the code actually running must
+    match it. Honoured only inside a training job, and a normal run needs an
+    attestation from a normal launch. Returns None when there is none.
+    """
+    from aerial_search.cloud import source
+
+    raw = os.environ.get(ATTESTATION_ENV)
+    if not raw:
+        return None
+    job = os.environ.get(JOB_ENV)
+    if not job:
+        raise ProvenanceError(
+            f"{ATTESTATION_ENV} is set but this is not a SageMaker training job "
+            f"({JOB_ENV} is not set), so it is not honoured"
+        ) from error
+    try:
+        attestation = json.loads(raw)
+        commit, expected = attestation["commit"], attestation["source_sha256"]
+    except (ValueError, KeyError, TypeError) as bad:
+        raise ProvenanceError(f"unreadable {ATTESTATION_ENV}: {bad!r}") from None
+    if not scratch and attestation.get("scratch") is not False:
+        raise ProvenanceError(
+            "the job was launched as a scratch run, so it cannot make a normal run"
+        )
+    actual = source.digest_dir(start.parents[1])
+    if actual != expected:
+        raise ProvenanceError(
+            f"the source running here ({actual}) is not the archive of commit "
+            f"{commit} that the launcher made ({expected})"
+        )
+    return {
+        "commit": commit,
+        "dirty": "",
+        "hidden_changes": [],
+        "commit_on_main": not attestation.get("scratch"),
+        "main_error": None,
+        "git_error": str(error),
+        "attestation": {
+            **attestation,
+            "job_name": job,
+            "verified_source_sha256": actual,
+        },
+    }
+
+
 def _check_code(scratch: bool, repo: Path | None) -> tuple[Path, dict[str, Any]]:
     """The repository root and its state; a normal run must be clean, on main."""
     start = (repo or _code_location()).resolve()
@@ -222,6 +278,9 @@ def _check_code(scratch: bool, repo: Path | None) -> tuple[Path, dict[str, Any]]
         root = _repo_root(start)
         state = _inspect(root, start)
     except GitError as error:
+        attested = _attested_state(start, error, scratch)
+        if attested is not None:
+            return start.parents[1], attested
         if not scratch:
             raise
         root = start if repo else Path.cwd().resolve()

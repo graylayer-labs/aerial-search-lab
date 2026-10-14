@@ -19,6 +19,7 @@ import math
 import os
 import random
 import shutil
+import time
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -472,11 +473,7 @@ class Checkpoints:
         """The saved state, or None for a fresh start."""
         if not self.path.exists():
             if self.predictions.exists():
-                raise CheckpointError(
-                    f"{self.predictions} exists without {self.path}: test "
-                    "predictions with no trained model behind them. Use an "
-                    "empty checkpoint directory."
-                )
+                self._set_predictions_aside(f"{self.path.name} does not")
             return None
         state = torch.load(self.path, map_location="cpu", weights_only=True)
         if state.get("identity") != self.identity:
@@ -491,11 +488,29 @@ class Checkpoints:
                 "with. Use another checkpoint directory."
             )
         if self.predictions.exists() and state.get("phase") != "trained":
-            raise CheckpointError(
-                f"{self.predictions} exists but the checkpoint is mid-training"
-            )
+            self._set_predictions_aside("the checkpoint is mid-training")
         self.state = state
         return state
+
+    def _set_predictions_aside(self, why: str) -> None:
+        """Move a predictions file that has no trained model behind it out of
+        the way, so the run can resume instead of failing on every restart.
+
+        S3 sync is asynchronous: after a stop it can hold the predictions
+        file beside an older checkpoint (or none). The predictions are the
+        trained model's, which resume rebuilds from the older state, so the
+        file is dropped from use, kept as `*.stale-<time>` for inspection,
+        and a warning says so.
+        """
+        stale = self.predictions.with_name(
+            f"{self.predictions.stem}.stale-{int(time.time())}.jsonl"
+        )
+        os.replace(self.predictions, stale)
+        warnings.warn(
+            f"{self.predictions} exists but {why}; set aside as {stale.name} and "
+            "the test pass will start again",
+            stacklevel=3,
+        )
 
     def start_attempt(self, run_name: str) -> list[str]:
         """Record that `run_name` now works from this directory; return the
@@ -508,6 +523,22 @@ class Checkpoints:
         partial.write_text(json.dumps([*earlier, run_name]) + "\n")
         os.replace(partial, path)
         return earlier
+
+    def rewrite(self) -> None:
+        """Write `checkpoint.pt` again, unchanged, as a new file.
+
+        Called once the first test prediction is appended: S3 sync is
+        asynchronous, and a small predictions line can reach S3 before the
+        large trained checkpoint does. A fresh write queues the checkpoint
+        for upload again, behind that line, so a stop later finds both.
+        """
+        if not self.path.exists():
+            return
+        partial = self.path.with_suffix(".partial")
+        shutil.copyfile(self.path, partial)
+        with partial.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(partial, self.path)
 
     def save(self, **state: Any) -> None:
         state = {**state, "identity": self.identity, "rng": _rng_state()}
@@ -748,10 +779,13 @@ def predict_to_file(
     *,
     workers: int = 0,
     frame_top_k: int = 100,
+    after_first: Callable[[], None] | None = None,
 ) -> int:
     """Predict the frames not yet in `log`, appending each as it is made.
 
-    Returns how many frames were already there (a resumed test pass)."""
+    `after_first` is called once, after the first frame of this pass is
+    appended. Returns how many frames were already there (a resumed test
+    pass)."""
     done = [str(r["image"]) in log.done for r in frames.records]
     if not all(done):
         for prediction in iter_predictions(
@@ -763,6 +797,9 @@ def predict_to_file(
             skip=done.__getitem__,
         ):
             log.append(prediction)
+            if after_first is not None:
+                after_first()
+                after_first = None
     return sum(done)
 
 
@@ -836,11 +873,11 @@ def run_baseline(
 
     if limit_frames and not scratch:
         raise ValueError("limit_frames needs a scratch run")
-    if device.type != "cpu":
+    if device.type not in ("cpu", "cuda"):
         if not scratch:
             raise ValueError(
-                f"a normal run must use the cpu, not {device.type}: Faster R-CNN "
-                "on MPS diverged (loss 7e7) and hung"
+                f"a normal run must use the cpu or cuda, not {device.type}: "
+                "Faster R-CNN on MPS diverged (loss 7e7) and hung"
             )
         warnings.warn(f"{device.type} is unreliable for this baseline", stacklevel=2)
     recipe = replace(recipe, device=device.type)
@@ -958,6 +995,7 @@ def run_baseline(
                 log,
                 workers=recipe.workers,
                 frame_top_k=recipe.frame_cap,
+                after_first=checkpoints.rewrite if checkpoint_dir else None,
             )
             # Scored from the file, so `aerial-search rescore` gives these numbers.
             predictions = directory / PREDICTIONS_FILENAME

@@ -1,0 +1,168 @@
+"""What runs inside the SageMaker job (#113).
+
+The same code path as the laptop: `aerial-search train-baseline` with the
+launcher's flags, plus the job's own paths, `--checkpoint-dir
+/opt/ml/checkpoints` and a per-attempt run name.
+
+Provenance without git. The launcher verified the tree and `origin/main` on
+the laptop and archived exactly that commit. It sent two digests in the job's
+environment: of the archive's files and of the manifests. Here:
+
+1. `prepare` hashes `/opt/ml/code` and the manifests channel and refuses to
+   run on any difference (modified, added or removed file).
+2. `train-baseline` then calls `start_run`, which, finding no git work tree
+   and an `AERIAL_SEARCH_ATTESTATION` inside a SageMaker job
+   (`TRAINING_JOB_NAME` set), hashes the code again and records the commit,
+   instance type, spot or on-demand, and job name in `run.json`.
+3. The data is verified as on the laptop: `start_run` hashes the directories
+   the manifests name, read through the FastFile mount, against the pinned
+   list in the archived commit. A normal run's `run.json` records
+   `data_verified_at`; a scratch run records the verification skipped.
+
+What this does not prove: that the digest the launcher sent is of the commit
+it names. That rests on the launcher having made the archive itself with
+`git archive`, on the laptop, after the clean-tree and origin/main checks.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tomllib
+from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+from aerial_search.cloud import safe_name, source
+
+CODE_ROOT = Path(__file__).resolve().parents[3]
+DATASET = Path("/opt/ml/input/data/dataset")
+MANIFESTS = Path("/opt/ml/input/data/manifests")
+CHECKPOINTS = Path("/opt/ml/checkpoints")
+OUTPUT = Path("/opt/ml/output/data")  # uploaded as output.tar.gz, even on failure
+PROVIDED = ("torch", "torchvision")  # in the container; not reinstalled
+
+
+class JobRefused(RuntimeError):
+    """The job will not run: its code or inputs are not what was launched."""
+
+
+def attempt_run_name(logical_run: str, checkpoint_dir: Path) -> str:
+    """`<run>-a<n>`, a name no earlier attempt of this run used.
+
+    A restart must never reuse a run directory name (`start_run` refuses an
+    existing one). `attempts.json` in the checkpoint directory, synced to S3,
+    lists the earlier attempts' names.
+    """
+    path = checkpoint_dir / "attempts.json"
+    earlier = set(json.loads(path.read_text())) if path.exists() else set()
+    base = safe_name(logical_run)
+    n = len(earlier) + 1
+    while f"{base}-a{n}" in earlier:
+        n += 1
+    return f"{base}-a{n}"
+
+
+def prepare(
+    environ: Mapping[str, str],
+    *,
+    code_root: Path,
+    data_root: Path,
+    manifests: Path,
+    checkpoint_dir: Path,
+) -> list[str]:
+    """Verify the code and manifests; return the `aerial-search` arguments."""
+    try:
+        attestation = json.loads(environ["AERIAL_SEARCH_ATTESTATION"])
+        baseline_args = json.loads(environ["AERIAL_SEARCH_BASELINE_ARGS"])
+        logical_run = environ["AERIAL_SEARCH_LOGICAL_RUN"]
+    except (KeyError, ValueError) as error:
+        raise JobRefused(f"the job's environment is incomplete: {error!r}") from None
+    if not environ.get("TRAINING_JOB_NAME"):
+        raise JobRefused("not inside a SageMaker training job (no TRAINING_JOB_NAME)")
+    actual = source.digest_dir(code_root)
+    if actual != attestation.get("source_sha256"):
+        raise JobRefused(
+            f"the source in {code_root} ({actual}) is not the archive the "
+            f"launcher made ({attestation.get('source_sha256')})"
+        )
+    actual = source.digest_dir(manifests)
+    if actual != attestation.get("manifests_sha256"):
+        raise JobRefused(
+            f"the manifests in {manifests} ({actual}) are not the ones the "
+            f"launcher sent ({attestation.get('manifests_sha256')})"
+        )
+    return [
+        "train-baseline",
+        *baseline_args,
+        "--data-root",
+        str(data_root),
+        "--manifests",
+        str(manifests),
+        "--checkpoint-dir",
+        str(checkpoint_dir),
+        "--run-name",
+        attempt_run_name(logical_run, checkpoint_dir),
+    ]
+
+
+def _dependencies(code_root: Path) -> list[str]:
+    project = tomllib.loads((code_root / "pyproject.toml").read_text())["project"]
+    return [
+        d
+        for d in project["dependencies"]
+        if d.split(">")[0].split("=")[0].strip().lower() not in PROVIDED
+    ]
+
+
+def _install(dependencies: list[str]) -> None:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", *dependencies],
+        check=True,
+    )
+
+
+def _installed(dependencies: list[str]) -> dict[str, str | None]:
+    versions: dict[str, str | None] = {}
+    for spec in [*PROVIDED, *dependencies]:
+        name = spec.split(">")[0].split("=")[0].strip()
+        try:
+            versions[name] = version(name)
+        except PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def main(environ: Mapping[str, str] | None = None) -> None:
+    """Entry point: verify, install the few missing packages, run, hand back."""
+    environ = os.environ if environ is None else environ
+    try:
+        argv = prepare(
+            environ,
+            code_root=CODE_ROOT,
+            data_root=DATASET,
+            manifests=MANIFESTS,
+            checkpoint_dir=CHECKPOINTS,
+        )
+    except JobRefused as error:
+        raise SystemExit(f"refusing to run: {error}") from error
+    dependencies = _dependencies(CODE_ROOT)
+    _install(dependencies)
+    sys.path.insert(0, str(CODE_ROOT / "src"))
+    from aerial_search import cli, run
+
+    name = argv[argv.index("--run-name") + 1]
+    outputs = CODE_ROOT / "outputs"
+    try:
+        cli.main(argv)
+    finally:
+        directory = outputs / name
+        if (directory / "run.json").exists():
+            run.update_run(directory, installed_packages=_installed(dependencies))
+        if outputs.exists():
+            OUTPUT.mkdir(parents=True, exist_ok=True)
+            for item in outputs.iterdir():
+                shutil.copytree(item, OUTPUT / item.name, dirs_exist_ok=True)
