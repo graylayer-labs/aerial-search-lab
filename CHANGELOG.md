@@ -4,6 +4,19 @@ Key changes to the project, newest first. Routine fixes and wording changes
 are left out; the git log has those. Entries are grouped by epic and date, and
 each links to the issue or pull request that holds the detail.
 
+## Epic: Domain adaptation (in progress)
+
+### 2026-10-14
+
+**New capability**
+- The fine-tuned detector can now run on overlapping tiles at native
+  resolution (`--input tiled`), so 4–16 px people are no longer shrunk away;
+  boxes are stitched back to source pixels and merged before the unchanged
+  scorer. No tiled result yet: the full grid takes about 26 h on the laptop
+  and waits on a compute decision.
+  ([#96](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/96),
+  [#109](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/109))
+
 ## Epic: Off-the-shelf bar (in progress)
 
 ### 2026-10-04
