@@ -200,6 +200,9 @@ state and its test predictions as it goes and continues a stopped attempt.
   on SageMaker `/opt/ml/checkpoints`, which is synced to S3). It holds
   `checkpoint.pt`, `test_predictions.jsonl`, `attempts.json` and a lock. It
   is the one place besides the run directory that a baseline run writes.
+  When a run with the default directory completes, `checkpoint.pt` (up to
+  0.5 GB) is deleted and the predictions file kept as the evidence; an
+  explicit `--checkpoint-dir` is left as it is, since SageMaker manages it.
 - **How often:** every 50 steps (`--checkpoint-every`) and once training
   ends, with the selected weights. At about 3.4 s a step, a stop loses at
   most about 3 minutes; a save takes 0.1 s (MobileNet, 228 MB) to 0.6 s
@@ -211,7 +214,8 @@ state and its test predictions as it goes and continues a stopped attempt.
   sampler made to draw on the RNG; dropping the RNG restore fails the test.
 - **Same run only:** the checkpoint records the config (recipe and tiling),
   seed, commit, scratch flag and the manifests' SHA-256. Any difference is
-  refused before a run directory is made. A lock refuses a second live run
+  refused before a run directory is made. A scratch checkpoint records only
+  HEAD, so uncommitted code edits between attempts are not detected. A lock refuses a second live run
   on the same directory: in the first scratch check a stray process wrote
   test frames twice, and the scorer refused the file.
 - **Run directories stay new:** a resumed attempt gets its own run
@@ -222,7 +226,10 @@ state and its test predictions as it goes and continues a stopped attempt.
 - **Predictions file:** one JSON line per test frame (frame id, source-pixel
   boxes, scores) after the tile merge and the per-frame cap, flushed and
   synced as written. On resume, frames present are skipped and a last line
-  cut short is dropped; a bad line elsewhere is refused. At the end it is
+  cut short is dropped; a bad line elsewhere is refused. Untiled frames keep
+  their full-pass batches of 8: a batch whose frames are all written is
+  skipped, a partly written one is run whole and only its missing frames
+  are appended, so the file is byte-identical to an uninterrupted run's. At the end it is
   copied into the run directory and the score is computed from it.
 - **Re-score:** `aerial-search rescore <run-dir> [--by-size]` scores that
   file again without the model, against the test manifest named in
