@@ -642,13 +642,21 @@ def iter_predictions_tiled(
     batch_size: int = 8,
     workers: int = 0,
     frame_top_k: int = 100,
+    only: Sequence[int] | None = None,
 ) -> Iterator[Prediction]:
     """Detections per whole frame, one frame at a time: each tile's boxes
     moved to source pixels, then duplicates from the overlaps merged by
-    class-agnostic NMS, then the best `frame_top_k` kept."""
+    class-agnostic NMS, then the best `frame_top_k` kept. `only` limits it
+    to those frame indices."""
     model.to(device).eval()
-    loader = DataLoader(frames, batch_size=1, num_workers=workers, collate_fn=_collate)
-    for n, ((tiles,), (grid,)) in enumerate(loader):
+    indices = list(range(len(frames))) if only is None else list(only)
+    loader = DataLoader(
+        frames,
+        batch_sampler=[[i] for i in indices],
+        num_workers=workers,
+        collate_fn=_collate,
+    )
+    for n, ((tiles,), (grid,)) in zip(indices, loader, strict=True):
         boxes, scores = [], []
         with torch.no_grad():
             for i in range(0, len(tiles), batch_size):
@@ -672,9 +680,15 @@ def iter_predictions(
     batch_size: int = 8,
     workers: int = 0,
     frame_top_k: int = 100,
+    skip: Callable[[int], bool] | None = None,
 ) -> Iterator[Prediction]:
     """Detections in source pixels (the dataset's scale undone), frame by
-    frame in the dataset's order, so a caller can keep each as it comes."""
+    frame in the dataset's order, so a caller can keep each as it comes.
+
+    `skip(i)` true leaves frame i out. Untiled frames are batched as in a
+    full pass (consecutive runs of `batch_size`): a batch whose frames are
+    all skipped is not run, and a partly skipped one is run whole, so every
+    frame's boxes come from the same batch as in an uninterrupted pass."""
     if isinstance(frames, TiledFrames):
         yield from iter_predictions_tiled(
             model,
@@ -683,17 +697,25 @@ def iter_predictions(
             batch_size=batch_size,
             workers=workers,
             frame_top_k=frame_top_k,
+            only=[i for i in range(len(frames)) if not (skip and skip(i))],
         )
         return
     model.to(device).eval()
+    batches = [
+        list(range(i, min(i + batch_size, len(frames))))
+        for i in range(0, len(frames), batch_size)
+    ]
+    if skip is not None:
+        batches = [b for b in batches if not all(skip(i) for i in b)]
     loader = DataLoader(
-        frames, batch_size=batch_size, num_workers=workers, collate_fn=_collate
+        frames, batch_sampler=batches, num_workers=workers, collate_fn=_collate
     )
-    n = 0
-    for images, _, scales in loader:
+    for batch, (images, _, scales) in zip(batches, loader, strict=True):
         with torch.no_grad():
             outputs = model([im.to(device) for im in images])
-        for o, scale in zip(outputs, scales, strict=True):
+        for n, o, scale in zip(batch, outputs, scales, strict=True):
+            if skip is not None and skip(n):
+                continue
             boxes = o["boxes"].cpu().numpy().astype(np.float64)
             boxes = boxes / np.tile(scale.numpy().astype(np.float64), 2)
             width, height = frames.records[n]["size"]
@@ -704,7 +726,6 @@ def iter_predictions(
                 boxes,
                 o["scores"].cpu().numpy().astype(np.float64),
             )
-            n += 1
 
 
 def predict_tiled(model, frames: TiledFrames, device: torch.device, **kwargs):
@@ -719,13 +740,6 @@ def predict(
     return list(iter_predictions(model, frames, device, **kwargs))
 
 
-def _same_kind(frames: Frames | TiledFrames, records: list[dict]):
-    """A dataset like `frames` over other records (the frames still to predict)."""
-    if isinstance(frames, TiledFrames):
-        return TiledFrames(records, frames.data_root, frames.spec)
-    return Frames(records, frames.data_root, frames.size)
-
-
 def predict_to_file(
     model,
     frames: Frames | TiledFrames,
@@ -738,18 +752,18 @@ def predict_to_file(
     """Predict the frames not yet in `log`, appending each as it is made.
 
     Returns how many frames were already there (a resumed test pass)."""
-    remaining = [r for r in frames.records if str(r["image"]) not in log.done]
-    already = len(frames.records) - len(remaining)
-    if remaining:
+    done = [str(r["image"]) in log.done for r in frames.records]
+    if not all(done):
         for prediction in iter_predictions(
             model,
-            _same_kind(frames, remaining) if already else frames,
+            frames,
             device,
             workers=workers,
             frame_top_k=frame_top_k,
+            skip=done.__getitem__,
         ):
             log.append(prediction)
-    return already
+    return sum(done)
 
 
 def evaluate(
@@ -961,6 +975,11 @@ def run_baseline(
             (directory / "training.json").write_text(
                 json.dumps(history, indent=2, allow_nan=True) + "\n"
             )
+            if checkpoint_dir is None:
+                # Only a stopped run needs it, and it is up to 0.5 GB; the
+                # predictions file stays as the evidence. An explicit
+                # directory (SageMaker's) is left to whoever manages it.
+                checkpoints.path.unlink(missing_ok=True)
         except BaseException as error:
             run_module.finish_run(directory, error)
             raise

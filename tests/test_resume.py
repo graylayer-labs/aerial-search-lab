@@ -62,8 +62,11 @@ class Crash(RuntimeError):
     pass
 
 
-def model_factory(crash_at_train_call: int | None = None):
-    """The tiny untrained detector; optionally raise on the n-th training call."""
+def model_factory(
+    crash_at_train_call: int | None = None, eval_sizes: list[int] | None = None
+):
+    """The tiny untrained detector; optionally raise on the n-th training call
+    and record the number of images in each inference call."""
 
     def build(arch, **kwargs):
         kwargs["pretrained"] = False  # no download in tests
@@ -73,7 +76,7 @@ def model_factory(crash_at_train_call: int | None = None):
         # resume that lost the RNG state would differ.
         model.rpn.fg_bg_sampler.batch_size_per_image = 4
         model.roi_heads.fg_bg_sampler.batch_size_per_image = 4
-        if crash_at_train_call is not None:
+        if crash_at_train_call is not None or eval_sizes is not None:
             real_forward = model.forward
             calls = {"n": 0}
 
@@ -82,6 +85,8 @@ def model_factory(crash_at_train_call: int | None = None):
                     calls["n"] += 1
                     if calls["n"] == crash_at_train_call:
                         raise Crash("spot instance stopped")
+                elif eval_sizes is not None:
+                    eval_sizes.append(len(images))
                 return real_forward(images, targets)
 
             model.forward = forward
@@ -137,7 +142,8 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path, monkeypatch, mode):
         monkeypatch.setattr(be, "tile_spec", lambda camera, recipe: SPEC)
 
     monkeypatch.setattr(be, "build_model", model_factory())
-    whole = run(tmp_path, manifests, raw, "whole", mode)
+    own = tmp_path / "ckpt-whole"
+    whole = run(tmp_path, manifests, raw, "whole", mode, checkpoint_dir=own)
 
     # Stopped during step 3, after the checkpoint at step 2: step 3 is redone.
     shared = tmp_path / "checkpoints"
@@ -160,7 +166,7 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path, monkeypatch, mode):
     b = json.loads((second_dir / "training.json").read_text())
     np.testing.assert_allclose(a["loss"], b["loss"], rtol=1e-6)
     assert a["validation"] == b["validation"] and a["best_step"] == b["best_step"]
-    wa = final_weights(whole_dir / "checkpoints")
+    wa = final_weights(own)
     wb = final_weights(shared)
     assert wa.keys() == wb.keys()
     for key in wa:
@@ -171,12 +177,14 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path, monkeypatch, mode):
     assert whole["test"] == resumed["test"]
 
 
+@pytest.mark.parametrize("mode", ["native", "tiled"])
 def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, mode
 ):
     manifests, raw = fake_fold(tmp_path)
     monkeypatch.setattr(be, "build_model", model_factory())
-    monkeypatch.setattr(be, "tile_spec", lambda camera, recipe: SPEC)
+    if mode == "tiled":
+        monkeypatch.setattr(be, "tile_spec", lambda camera, recipe: SPEC)
     shared = tmp_path / "checkpoints"
     real_append = pr.PredictionLog.append
     appended: list[str] = []
@@ -189,7 +197,7 @@ def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
 
     monkeypatch.setattr(pr.PredictionLog, "append", crash_after_two)
     with pytest.raises(Crash):
-        run(tmp_path, manifests, raw, "first", "tiled", checkpoint_dir=shared)
+        run(tmp_path, manifests, raw, "first", mode, checkpoint_dir=shared)
     assert len(appended) == 2
 
     def count(self, prediction):
@@ -197,7 +205,13 @@ def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
         real_append(self, prediction)
 
     monkeypatch.setattr(pr.PredictionLog, "append", count)
-    run(tmp_path, manifests, raw, "second", "tiled", checkpoint_dir=shared)
+    sizes: list[int] = []
+    monkeypatch.setattr(be, "build_model", model_factory(eval_sizes=sizes))
+    run(tmp_path, manifests, raw, "second", mode, checkpoint_dir=shared)
+    if mode == "native":
+        # The partly written batch is run again whole (all 4 test frames in
+        # one batch of 8), so its numbers equal the uninterrupted run's.
+        assert sizes == [4]
     tests = [
         json.loads(line)["image"]
         for line in (manifests / "folds" / FOLD / "thermal" / "test.jsonl")
@@ -211,7 +225,7 @@ def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
     assert record["resumed_from_step"] == 4 and record["resumed_predictions"] == 2
 
     monkeypatch.setattr(be, "build_model", model_factory())
-    run(tmp_path, manifests, raw, "whole", "tiled")
+    run(tmp_path, manifests, raw, "whole", mode)
     whole = run_dir(tmp_path, "whole") / pr.PREDICTIONS_FILENAME
     assert whole.read_text() == lines
 
@@ -321,3 +335,56 @@ def test_two_live_runs_cannot_share_a_checkpoint_directory(tmp_path):
     first.unlock()
     second.lock()
     second.unlock()
+
+
+@pytest.mark.parametrize("mode", ["native", "tiled"])
+def test_scoring_the_file_equals_scoring_the_model_in_process(tmp_path, mode):
+    manifests, raw = fake_fold(tmp_path)
+    records = [
+        json.loads(line)
+        for line in (manifests / "folds" / FOLD / "thermal" / "test.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    torch.manual_seed(0)
+    model = model_factory()("fasterrcnn_mobilenet_v3_large_fpn")
+    frames: be.Frames | be.TiledFrames
+    if mode == "tiled":
+        frames = be.TiledFrames(records, raw, SPEC)
+    else:
+        frames = be.Frames(records, raw, None)
+    device = torch.device("cpu")
+    path = tmp_path / pr.PREDICTIONS_FILENAME
+    be.predict_to_file(model, frames, device, pr.PredictionLog(path))
+    from_file = pr.score_file(path, records)
+    in_process = be.evaluate(model, frames, device)
+    assert from_file.overall.n_predictions > 0
+    assert from_file.to_dict() == in_process.to_dict()
+
+
+def test_resuming_after_the_test_manifest_changed_is_refused(tmp_path, monkeypatch):
+    manifests, raw = fake_fold(tmp_path)
+    shared = tmp_path / "checkpoints"
+    monkeypatch.setattr(be, "build_model", model_factory(crash_at_train_call=3))
+    with pytest.raises(Crash):
+        run(tmp_path, manifests, raw, "first", "native", checkpoint_dir=shared)
+    test = manifests / "folds" / FOLD / "thermal" / "test.jsonl"
+    test.write_text(test.read_text().replace('"x_center": 0.4', '"x_center": 0.45'))
+    monkeypatch.setattr(be, "build_model", model_factory())
+    with pytest.raises(be.CheckpointError, match="inputs differ"):
+        run(tmp_path, manifests, raw, "second", "native", checkpoint_dir=shared)
+    assert not run_dir(tmp_path, "second").exists()
+
+
+def test_a_default_checkpoint_is_deleted_on_completion_an_explicit_one_kept(
+    tmp_path, monkeypatch
+):
+    manifests, raw = fake_fold(tmp_path)
+    monkeypatch.setattr(be, "build_model", model_factory())
+    run(tmp_path, manifests, raw, "default", "native")
+    directory = run_dir(tmp_path, "default")
+    assert not (directory / "checkpoints" / be.CHECKPOINT_FILENAME).exists()
+    assert (directory / pr.PREDICTIONS_FILENAME).exists()
+    explicit = tmp_path / "explicit"
+    run(tmp_path, manifests, raw, "explicit", "native", checkpoint_dir=explicit)
+    assert (explicit / be.CHECKPOINT_FILENAME).exists()
