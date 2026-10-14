@@ -142,3 +142,38 @@ uv run aerial-search compare-table head=outputs/detection-head/siglip2-base-nafl
 - The baseline selects its step on fewer validation frames than the head.
 - One full-resolution run, on the 4K site-day, where resolution helps most.
   The size of the gain on the 2K site-days is unknown.
+
+## Tiled input (#96): design and cost
+
+`train-baseline --input tiled` cuts each source frame into overlapping tiles at
+native resolution. The model and recipe are unchanged; the default (`cache`)
+and `native` inputs behave as before. No results yet: the grid is not run.
+
+- **Tile size:** the camera's cache input (RGB 672×384, thermal 560×448), so
+  the anchors, strides and pretrained weights fit as they do untiled.
+- **Overlap:** RGB 160 px, thermal 96 px, so most people sit whole inside at
+  least one tile. In the fold manifests RGB boxes are 104×146 px at the 90th
+  percentile (up to 972 px) and thermal 50×76 px (up to 190×431). No overlap
+  can hold the largest boxes in a 384-px-high tile; those are seen cut. A 1080p
+  RGB frame gives 20 tiles, a 4K frame 72, a thermal frame 4.
+- **Training, cut boxes:** a box is kept, clipped to the tile, when at least
+  half its area is inside (`--min-visible 0.5`); less than that is dropped from
+  that tile, so a sliver never teaches the model to fire on a person's edge.
+- **Training, empty tiles:** every tile with a person, plus random empty tiles
+  at 1 per person tile (`--empty-ratio 1.0`), chosen once from the seed. Most
+  tiles are empty (Baker RGB 10%: 580 frames, 14,720 tiles, 2,181 with a
+  person); keeping all would swamp the signal. Steps stay 300 at batch 8.
+- **Scoring:** each tile's boxes move to source pixels; class-agnostic NMS at
+  IoU 0.5 over the stitched frame merges a person seen in an overlap (the
+  cut view of a person overlaps the whole view above 0.5 when at least about
+  half is visible, which is the training cut-off); the top 300 per frame are
+  kept (`--frame-top-k`); then the existing `evaluate_detections` scores whole
+  frames on the same folds and test sets.
+- **Cost (laptop CPU, scratch, untrained-then-briefly-trained model):** about
+  3.4 s per training step (3.4 RGB, 4.0 thermal) and 0.11 s per tile at test
+  time: 2.2 s per 1080p RGB frame, 5.0 s per 4K frame, 1.4 s per thermal
+  frame. Tiles are cropped on the fly, so extra disk is nil. Per cell:
+  training about 17 to 20 min, validation 7 to 11 min, test 1 to 2.5 h. The
+  grid (rgb and thermal, 4 folds, 10% and 100%) is about 26 h, against 6 h for
+  the 32 untiled runs. The test pass is most of it (RGB FHL alone, 4,154
+  frames, is about 2.5 h), so no cell fits the 30-minute rule.
