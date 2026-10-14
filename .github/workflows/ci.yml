@@ -36,4 +36,4 @@ jobs:
     name: checks
     permissions:
       contents: read
-    uses: graylayer-labs/.github/.github/workflows/ci-python.yml@49eec92db441e22e6717bc02d5262ed78a4aefc6 # pre-release (graylayer-labs/.github#19 head); re-pin to v1.0.0 before merge
+    uses: graylayer-labs/.github/.github/workflows/ci-python.yml@8c9fa19473d67349548fa516aa01fe4753e07003 # v1.0.0
