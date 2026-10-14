@@ -190,3 +190,46 @@ and `native` inputs behave as before. No results yet: the grid is not run.
   test, thermal 1.8 h plus 3.1 h, so 2 x 12.9 h. The untiled 32 runs took 6 h.
   The test pass is most of it (RGB FHL alone, 4,154 frames, about 2.5 h), so
   no cell fits the 30-minute rule.
+
+## Checkpoints, resume and the predictions file (#112)
+
+A spot instance can be stopped at any time, so `train-baseline` saves its
+state and its test predictions as it goes and continues a stopped attempt.
+
+- **Where:** `--checkpoint-dir` (default `checkpoints/` in the run directory;
+  on SageMaker `/opt/ml/checkpoints`, which is synced to S3). It holds
+  `checkpoint.pt`, `test_predictions.jsonl`, `attempts.json` and a lock. It
+  is the one place besides the run directory that a baseline run writes.
+- **How often:** every 50 steps (`--checkpoint-every`) and once training
+  ends, with the selected weights. At about 3.4 s a step, a stop loses at
+  most about 3 minutes; a save takes 0.1 s (MobileNet, 228 MB) to 0.6 s
+  (ResNet-50, 497 MB). The file is replaced atomically.
+- **What is saved:** weights, optimiser, schedule, history, the best weights
+  so far, the step, and the Python, NumPy and torch RNG states. The batch
+  order is rebuilt from the seed and skips the steps taken. Resume equals an
+  uninterrupted run: tested on a tiny model, tiled and untiled, with the
+  sampler made to draw on the RNG; dropping the RNG restore fails the test.
+- **Same run only:** the checkpoint records the config (recipe and tiling),
+  seed, commit, scratch flag and the manifests' SHA-256. Any difference is
+  refused before a run directory is made. A lock refuses a second live run
+  on the same directory: in the first scratch check a stray process wrote
+  test frames twice, and the scorer refused the file.
+- **Run directories stay new:** a resumed attempt gets its own run
+  directory; nothing is reopened or overwritten. Its `run.json` records
+  `checkpoint`, `resumed_from_step`, `resumes` (attempts before it),
+  `previous_attempts` and `resumed_predictions`, and stays `started` until
+  it completes. Earlier attempts stay `started` or `failed`: not quotable.
+- **Predictions file:** one JSON line per test frame (frame id, source-pixel
+  boxes, scores) after the tile merge and the per-frame cap, flushed and
+  synced as written. On resume, frames present are skipped and a last line
+  cut short is dropped; a bad line elsewhere is refused. At the end it is
+  copied into the run directory and the score is computed from it.
+- **Re-score:** `aerial-search rescore <run-dir> [--by-size]` scores that
+  file again without the model, against the test manifest named in
+  `run.json` (refused if its SHA-256 changed). It equals the run's own score
+  by construction. The size bins are the scorer's: sqrt(box area) in source
+  pixels, very_tiny under 8, tiny 8 to 16, small 16 to 32, medium_plus 32 up.
+- **Scratch check (thermal, Baker, tiled, 6 steps, 6 frames per split):**
+  killed with SIGKILL after the step-2 checkpoint, again after 2 of 6 test
+  frames; the third attempt completed. Its losses, predictions file and
+  metrics equal an uninterrupted run's, and `rescore` equals the metrics.
