@@ -160,20 +160,33 @@ and `native` inputs behave as before. No results yet: the grid is not run.
   half its area is inside (`--min-visible 0.5`); less than that is dropped from
   that tile, so a sliver never teaches the model to fire on a person's edge.
 - **Training, empty tiles:** every tile with a person, plus random empty tiles
-  at 1 per person tile (`--empty-ratio 1.0`), chosen once from the seed. Most
-  tiles are empty (Baker RGB 10%: 580 frames, 14,720 tiles, 2,181 with a
-  person); keeping all would swamp the signal. Steps stay 300 at batch 8.
+  at 1 per person tile (`--empty-ratio 1.0`), chosen once from the seed. A tile
+  that overlaps any part of a box is never picked as an empty one, because a
+  box under half visible is unlabelled there and the tile is not a true
+  negative. Most tiles are empty (Baker RGB 10%: 580 frames, 14,720 tiles,
+  2,181 with a person); keeping all would swamp the signal. Steps stay 300 at
+  batch 8. `training.json` records `train_boxes` and `train_boxes_unlabelled`,
+  the boxes that reach no tile at 50% visible (Baker RGB 10%: 0 of 1,499).
 - **Scoring:** each tile's boxes move to source pixels; class-agnostic NMS at
-  IoU 0.5 over the stitched frame merges a person seen in an overlap (the
-  cut view of a person overlaps the whole view above 0.5 when at least about
-  half is visible, which is the training cut-off); the top 300 per frame are
-  kept (`--frame-top-k`); then the existing `evaluate_detections` scores whole
-  frames on the same folds and test sets.
-- **Cost (laptop CPU, scratch, untrained-then-briefly-trained model):** about
-  3.4 s per training step (3.4 RGB, 4.0 thermal) and 0.11 s per tile at test
-  time: 2.2 s per 1080p RGB frame, 5.0 s per 4K frame, 1.4 s per thermal
-  frame. Tiles are cropped on the fly, so extra disk is nil. Per cell:
-  training about 17 to 20 min, validation 7 to 11 min, test 1 to 2.5 h. The
-  grid (rgb and thermal, 4 folds, 10% and 100%) is about 26 h, against 6 h for
-  the 32 untiled runs. The test pass is most of it (RGB FHL alone, 4,154
-  frames, is about 2.5 h), so no cell fits the 30-minute rule.
+  IoU 0.5 over the stitched frame merges a person seen in an overlap; the top
+  100 per frame are kept (`--frame-top-k`, the untiled `top_k`, because the
+  scorer's `maxDets` follows the largest prediction count and a higher cap
+  would favour the tiled rows); then the existing `evaluate_detections` scores
+  whole frames on the same folds and test sets.
+- **Known limits:** a person wider or taller than the overlap is cut in every
+  tile that shows them, and a cut view under half visible is unlabelled in
+  training yet can survive NMS at IoU 0.5 as a second box. Both cost AP, mostly
+  `ap_iou50`. When results arrive, break them down by box size.
+- **Cost (laptop CPU, scratch, 6 training steps and 12 test frames per
+  setting, model barely trained):** about 3.4 s per training step (RGB; 4.0
+  thermal). Test time per frame: 2.2 s for a 1080p RGB frame (20 tiles), 5.0 s
+  for a 4K frame (72 tiles), 1.4 s for a thermal frame (4 tiles). Time per
+  tile is not constant (decoding and scoring are per frame), so use the
+  per-frame figures. A barely-trained model emits more low-score boxes, so
+  these could be high or low for a trained one: uncertain in both directions.
+  Tiles are cropped on the fly, so extra disk is nil. Per cell: training about
+  17 to 20 min, validation 7 to 11 min, test 1 to 2.5 h. The 26 h grid total
+  follows from these: per fraction RGB 1.9 h train and validation plus 6.1 h
+  test, thermal 1.8 h plus 3.1 h, so 2 x 12.9 h. The untiled 32 runs took 6 h.
+  The test pass is most of it (RGB FHL alone, 4,154 frames, about 2.5 h), so
+  no cell fits the 30-minute rule.
