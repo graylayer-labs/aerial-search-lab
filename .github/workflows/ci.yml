@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # diff-cover compares with the base branch
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
@@ -27,4 +28,11 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run ty check
-      - run: uv run pytest
+      - run: uv run --locked --with pytest-cov==7.1.0 pytest --cov=aerial_search --cov-report=xml --cov-report=term
+      - name: Coverage of changed lines (80% minimum)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: >-
+          uvx diff-cover@10.6.0 coverage.xml --compare-branch="origin/$BASE_REF"
+          --fail-under=80
