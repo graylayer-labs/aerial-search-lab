@@ -12,10 +12,15 @@ the same `evaluate_detections`, so the two sit in one table
 from __future__ import annotations
 
 import copy
+import fcntl
+import hashlib
 import json
 import math
+import os
+import random
+import shutil
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -34,6 +39,11 @@ from aerial_search.evaluation.detection import (
     evaluate_detections,
 )
 from aerial_search.experiments.head_experiment import record_boxes, select_records
+from aerial_search.experiments.predictions import (
+    PREDICTIONS_FILENAME,
+    PredictionLog,
+    score_file,
+)
 
 ARCHITECTURES = (
     "fasterrcnn_mobilenet_v3_large_fpn",
@@ -65,6 +75,14 @@ ANCHORS: dict[str, tuple[tuple[int, ...], ...]] = {
     "fasterrcnn_resnet50_fpn": tuple((s,) for s in (8, 16, 32, 64, 128)),
     "fasterrcnn_mobilenet_v3_large_fpn": ((8, 16, 32, 64, 128),) * 3,
 }
+# Checkpoints (#112). A training step takes about 3.4 s on the CPU and saving
+# a checkpoint (weights, best weights, momentum: 228 MB MobileNet, 497 MB
+# ResNet-50) 0.1 to 0.6 s, so every 50 steps a spot stop loses at most about
+# 3 minutes of training, at under 0.5% overhead.
+CHECKPOINT_EVERY = 50
+CHECKPOINT_FILENAME = "checkpoint.pt"
+ATTEMPTS_FILENAME = "attempts.json"
+LOCK_FILENAME = "lock"
 
 
 @dataclass(frozen=True)
@@ -342,20 +360,163 @@ class BatchSteps:
     order of frames, a fresh shuffle appended whenever fewer than a batch
     remain, so a split smaller than a batch gives batches of the whole split."""
 
-    def __init__(self, n: int, batch_size: int, steps: int, seed: int):
+    def __init__(self, n: int, batch_size: int, steps: int, seed: int, start: int = 0):
         self.n, self.batch_size, self.steps, self.seed = n, batch_size, steps, seed
+        self.start = start  # steps already taken: a resumed run skips them
 
     def __len__(self) -> int:
-        return self.steps
+        return self.steps - self.start
 
     def __iter__(self):
         rng = np.random.default_rng(self.seed)
         order: list[int] = []
-        for _ in range(self.steps):
+        for step in range(self.steps):
             if len(order) < self.batch_size:
                 order += rng.permutation(self.n).tolist()
-            yield sorted(order[: self.batch_size])
+            if step >= self.start:
+                yield sorted(order[: self.batch_size])
             del order[: self.batch_size]
+
+
+# --- checkpoints ------------------------------------------------------------------
+
+
+class CheckpointError(ValueError):
+    """A checkpoint directory holds another run's state, or is inconsistent."""
+
+
+def checkpoint_identity(
+    config: dict[str, Any],
+    seed: int,
+    commit: str | None,
+    *,
+    scratch: bool,
+    inputs: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """What must match for a checkpoint to continue a run: the run's config
+    (recipe, tiling, camera, fold, fraction, frame counts), the seed, the
+    code's commit, scratch or not, and the SHA-256 of its manifests."""
+    identity = {
+        "config": config,
+        "seed": seed,
+        "commit": commit,
+        "scratch": scratch,
+        "inputs": inputs or {},
+    }
+    # Through JSON so tuples and lists compare equal after a save and load.
+    return json.loads(json.dumps(identity, sort_keys=True, default=str))
+
+
+def _rng_state() -> dict[str, Any]:
+    numpy = np.random.get_state(legacy=False)
+    assert isinstance(numpy, dict)
+    # Plain lists and tensors only, so the checkpoint loads with weights_only.
+    key = np.asarray(numpy["state"]["key"]).tolist()
+    return {
+        "python": random.getstate(),
+        "numpy": {**numpy, "state": {**numpy["state"], "key": key}},
+        "torch": torch.get_rng_state(),
+    }
+
+
+def _set_rng_state(state: dict[str, Any]) -> None:
+    random.setstate(state["python"])
+    numpy = state["numpy"]
+    key = np.asarray(numpy["state"]["key"], dtype=np.uint32)
+    np.random.set_state({**numpy, "state": {**numpy["state"], "key": key}})
+    torch.set_rng_state(state["torch"])
+
+
+class Checkpoints:
+    """One run's checkpoint in `directory`: `CHECKPOINT_FILENAME`, replaced
+    atomically every `every` steps and once training ends, beside the test
+    predictions file. `load` refuses a checkpoint of another identity."""
+
+    def __init__(self, directory: Path, identity: dict[str, Any], every: int):
+        if every < 1:
+            raise ValueError(f"checkpoint_every must be at least 1, not {every}")
+        self.directory, self.identity, self.every = directory, identity, every
+        self.state: dict[str, Any] | None = None
+        self._lock: int | None = None
+
+    def lock(self) -> None:
+        """Hold the directory for this process. A second live run on it would
+        write test frames twice and interleave checkpoints, so it is refused;
+        the lock is released when the process ends, however it ends."""
+        self.directory.mkdir(parents=True, exist_ok=True)
+        handle = os.open(self.directory / LOCK_FILENAME, os.O_RDWR | os.O_CREAT)
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(handle)
+            raise CheckpointError(
+                f"{self.directory} is in use by another live run"
+            ) from None
+        self._lock = handle
+
+    def unlock(self) -> None:
+        if self._lock is not None:
+            fcntl.flock(self._lock, fcntl.LOCK_UN)
+            os.close(self._lock)
+            self._lock = None
+
+    @property
+    def path(self) -> Path:
+        return self.directory / CHECKPOINT_FILENAME
+
+    @property
+    def predictions(self) -> Path:
+        return self.directory / PREDICTIONS_FILENAME
+
+    def load(self) -> dict[str, Any] | None:
+        """The saved state, or None for a fresh start."""
+        if not self.path.exists():
+            if self.predictions.exists():
+                raise CheckpointError(
+                    f"{self.predictions} exists without {self.path}: test "
+                    "predictions with no trained model behind them. Use an "
+                    "empty checkpoint directory."
+                )
+            return None
+        state = torch.load(self.path, map_location="cpu", weights_only=True)
+        if state.get("identity") != self.identity:
+            theirs, mine = state.get("identity") or {}, self.identity
+            differ = sorted(
+                k for k in set(theirs) | set(mine) if theirs.get(k) != mine.get(k)
+            )
+            raise CheckpointError(
+                f"the checkpoint in {self.directory} does not match this run "
+                f"({', '.join(differ) or 'no identity'} differ); a run resumes "
+                "only with the config, seed, commit and manifests it started "
+                "with. Use another checkpoint directory."
+            )
+        if self.predictions.exists() and state.get("phase") != "trained":
+            raise CheckpointError(
+                f"{self.predictions} exists but the checkpoint is mid-training"
+            )
+        self.state = state
+        return state
+
+    def start_attempt(self, run_name: str) -> list[str]:
+        """Record that `run_name` now works from this directory; return the
+        runs that did before it (a small JSON file, so the large checkpoint
+        is not rewritten to count resumes)."""
+        path = self.directory / ATTEMPTS_FILENAME
+        earlier = json.loads(path.read_text()) if path.exists() else []
+        self.directory.mkdir(parents=True, exist_ok=True)
+        partial = path.with_suffix(".partial")
+        partial.write_text(json.dumps([*earlier, run_name]) + "\n")
+        os.replace(partial, path)
+        return earlier
+
+    def save(self, **state: Any) -> None:
+        state = {**state, "identity": self.identity, "rng": _rng_state()}
+        self.directory.mkdir(parents=True, exist_ok=True)
+        partial = self.path.with_suffix(".partial")
+        torch.save(state, partial)
+        with partial.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(partial, self.path)  # a stop mid-save keeps the last one
 
 
 # --- training and scoring ---------------------------------------------------------
@@ -376,14 +537,25 @@ def train_baseline(
     device: torch.device,
     validate: Callable[[], float] | None = None,
     seed: int = 0,
+    checkpoints: Checkpoints | None = None,
 ) -> dict[str, Any]:
     """SGD with momentum, linear warm-up and cosine decay for `recipe.steps`.
 
-    Batches follow `batch_order`. Every `eval_every` steps (and at the end)
+    Batches follow `BatchSteps`. Every `eval_every` steps (and at the end)
     `validate` scores the model; the best-scoring weights are restored at the
     end (the earlier step wins a tie; NaN never wins).
+
+    With `checkpoints`, the state is saved every `checkpoints.every` steps and,
+    with the selected weights, once training ends. A loaded state
+    (`checkpoints.state`) is continued: weights, optimiser, schedule, history,
+    best weights, RNG and batch position, so the result equals an
+    uninterrupted run's. A state saved after training only restores weights.
     """
+    state = checkpoints.state if checkpoints else None
     model.to(device)
+    if state is not None and state["phase"] == "trained":
+        model.load_state_dict(state["model"])
+        return state["history"]
     optimiser = torch.optim.SGD(
         [p for p in model.parameters() if p.requires_grad],
         lr=recipe.learning_rate,
@@ -393,16 +565,29 @@ def train_baseline(
     schedule = torch.optim.lr_scheduler.LambdaLR(
         optimiser, lambda s: _lr_factor(s + 1, recipe)
     )
+    start = state["step"] if state is not None else 0
     loader = DataLoader(
         frames,
-        batch_sampler=BatchSteps(len(frames), recipe.batch_size, recipe.steps, seed),
+        batch_sampler=BatchSteps(
+            len(frames), recipe.batch_size, recipe.steps, seed, start
+        ),
         num_workers=recipe.workers,
         collate_fn=_collate,
         persistent_workers=recipe.workers > 0,
     )
+    # Creating the iterator draws the loader's base seed from the global torch
+    # RNG. An uninterrupted run draws it here at step 0, so a resumed run draws
+    # it first and then restores the RNG saved at its step.
+    batches = iter(loader)
     history: dict[str, Any] = {"loss": [], "validation": [], "best_step": None}
     best, best_state = -math.inf, None
-    for step, (images, targets, _) in enumerate(loader, start=1):
+    if state is not None:
+        model.load_state_dict(state["model"])
+        optimiser.load_state_dict(state["optimiser"])
+        schedule.load_state_dict(state["schedule"])
+        history, best, best_state = state["history"], state["best"], state["best_state"]
+        _set_rng_state(state["rng"])
+    for step, (images, targets, _) in enumerate(batches, start=start + 1):
         model.train()
         images = [im.to(device) for im in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
@@ -426,13 +611,30 @@ def train_baseline(
             if score > best:
                 best, best_state = score, copy.deepcopy(model.state_dict())
                 history["best_step"] = step
+        if checkpoints and step % checkpoints.every == 0 and step < recipe.steps:
+            checkpoints.save(
+                phase="training",
+                step=step,
+                model=model.state_dict(),
+                optimiser=optimiser.state_dict(),
+                schedule=schedule.state_dict(),
+                history=history,
+                best=best,
+                best_state=best_state,
+            )
     if best_state is not None:
         model.load_state_dict(best_state)
+    if checkpoints:
+        checkpoints.save(
+            phase="trained",
+            step=recipe.steps,
+            model=model.state_dict(),
+            history=history,
+        )
     return history
 
 
-@torch.no_grad()
-def predict_tiled(
+def iter_predictions_tiled(
     model,
     frames: TiledFrames,
     device: torch.device,
@@ -440,30 +642,29 @@ def predict_tiled(
     batch_size: int = 8,
     workers: int = 0,
     frame_top_k: int = 100,
-) -> list[Prediction]:
-    """Detections per whole frame: each tile's boxes moved to source pixels,
-    then duplicates from the overlaps merged by class-agnostic NMS."""
+) -> Iterator[Prediction]:
+    """Detections per whole frame, one frame at a time: each tile's boxes
+    moved to source pixels, then duplicates from the overlaps merged by
+    class-agnostic NMS, then the best `frame_top_k` kept."""
     model.to(device).eval()
     loader = DataLoader(frames, batch_size=1, num_workers=workers, collate_fn=_collate)
-    out: list[Prediction] = []
     for n, ((tiles,), (grid,)) in enumerate(loader):
         boxes, scores = [], []
-        for i in range(0, len(tiles), batch_size):
-            outputs = model([t.to(device) for t in tiles[i : i + batch_size]])
-            for o, tile in zip(outputs, grid[i : i + batch_size], strict=True):
-                local = o["boxes"].cpu().numpy().astype(np.float64)
-                boxes.append(tiling.to_source(local, tile))
-                scores.append(o["scores"].cpu().numpy().astype(np.float64))
+        with torch.no_grad():
+            for i in range(0, len(tiles), batch_size):
+                outputs = model([t.to(device) for t in tiles[i : i + batch_size]])
+                for o, tile in zip(outputs, grid[i : i + batch_size], strict=True):
+                    local = o["boxes"].cpu().numpy().astype(np.float64)
+                    boxes.append(tiling.to_source(local, tile))
+                    scores.append(o["scores"].cpu().numpy().astype(np.float64))
         merged, merged_scores = tiling.merge_detections(
             np.concatenate(boxes), np.concatenate(scores), frames.spec.merge_iou
         )
         merged, merged_scores = merged[:frame_top_k], merged_scores[:frame_top_k]
-        out.append(Prediction(str(frames.records[n]["image"]), merged, merged_scores))
-    return out
+        yield Prediction(str(frames.records[n]["image"]), merged, merged_scores)
 
 
-@torch.no_grad()
-def predict(
+def iter_predictions(
     model,
     frames: Frames | TiledFrames,
     device: torch.device,
@@ -471,10 +672,11 @@ def predict(
     batch_size: int = 8,
     workers: int = 0,
     frame_top_k: int = 100,
-) -> list[Prediction]:
-    """Detections in source pixels (the dataset's scale undone) per frame."""
+) -> Iterator[Prediction]:
+    """Detections in source pixels (the dataset's scale undone), frame by
+    frame in the dataset's order, so a caller can keep each as it comes."""
     if isinstance(frames, TiledFrames):
-        return predict_tiled(
+        yield from iter_predictions_tiled(
             model,
             frames,
             device,
@@ -482,29 +684,72 @@ def predict(
             workers=workers,
             frame_top_k=frame_top_k,
         )
+        return
     model.to(device).eval()
     loader = DataLoader(
         frames, batch_size=batch_size, num_workers=workers, collate_fn=_collate
     )
-    out: list[Prediction] = []
     n = 0
     for images, _, scales in loader:
-        outputs = model([im.to(device) for im in images])
+        with torch.no_grad():
+            outputs = model([im.to(device) for im in images])
         for o, scale in zip(outputs, scales, strict=True):
             boxes = o["boxes"].cpu().numpy().astype(np.float64)
             boxes = boxes / np.tile(scale.numpy().astype(np.float64), 2)
             width, height = frames.records[n]["size"]
             boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, width)
             boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, height)
-            out.append(
-                Prediction(
-                    str(frames.records[n]["image"]),
-                    boxes,
-                    o["scores"].cpu().numpy().astype(np.float64),
-                )
+            yield Prediction(
+                str(frames.records[n]["image"]),
+                boxes,
+                o["scores"].cpu().numpy().astype(np.float64),
             )
             n += 1
-    return out
+
+
+def predict_tiled(model, frames: TiledFrames, device: torch.device, **kwargs):
+    """All of `iter_predictions_tiled` as a list."""
+    return list(iter_predictions_tiled(model, frames, device, **kwargs))
+
+
+def predict(
+    model, frames: Frames | TiledFrames, device: torch.device, **kwargs
+) -> list[Prediction]:
+    """All of `iter_predictions` as a list."""
+    return list(iter_predictions(model, frames, device, **kwargs))
+
+
+def _same_kind(frames: Frames | TiledFrames, records: list[dict]):
+    """A dataset like `frames` over other records (the frames still to predict)."""
+    if isinstance(frames, TiledFrames):
+        return TiledFrames(records, frames.data_root, frames.spec)
+    return Frames(records, frames.data_root, frames.size)
+
+
+def predict_to_file(
+    model,
+    frames: Frames | TiledFrames,
+    device: torch.device,
+    log: PredictionLog,
+    *,
+    workers: int = 0,
+    frame_top_k: int = 100,
+) -> int:
+    """Predict the frames not yet in `log`, appending each as it is made.
+
+    Returns how many frames were already there (a resumed test pass)."""
+    remaining = [r for r in frames.records if str(r["image"]) not in log.done]
+    already = len(frames.records) - len(remaining)
+    if remaining:
+        for prediction in iter_predictions(
+            model,
+            _same_kind(frames, remaining) if already else frames,
+            device,
+            workers=workers,
+            frame_top_k=frame_top_k,
+        ):
+            log.append(prediction)
+    return already
 
 
 def evaluate(
@@ -555,12 +800,23 @@ def run_baseline(
     repo: Path | None = None,
     argv: list[str] | None = None,
     limit_frames: int = 0,
+    checkpoint_dir: Path | None = None,
+    checkpoint_every: int = CHECKPOINT_EVERY,
 ) -> dict[str, Any]:
     """One run: fine-tune at `percent`, select on validation, score on test.
 
     `limit_frames` (scratch only) keeps that many frames of each split, for a
     timing or pipeline check. Writes `run.json`, `detection_metrics.json`
-    (test) and `training.json` into the run directory.
+    (test), `training.json` and the test predictions file into the run
+    directory.
+
+    Checkpoints and the test predictions as they are made go to
+    `checkpoint_dir` (default: `checkpoints/` in the run directory). If it
+    holds a previous attempt of the same run (config, seed, commit, scratch
+    and manifests all equal), that attempt is continued; any difference is
+    refused with `CheckpointError` before a run directory is created. The run
+    directory itself is always new: a resumed run has its own, whose
+    `run.json` records `resumed_from_step` and `resumes`.
     """
     from aerial_search import run as run_module
 
@@ -591,75 +847,127 @@ def run_baseline(
         "images": {role: len(rs) for role, rs in records.items()},
         "limit_frames": limit_frames,
     }
-    directory = run_module.start_run(
-        run_name or default_run_name(recipe, camera, fold, percent, seed),
+    commit = run_module.code_state(scratch=scratch, repo=repo)["commit"]
+    identity = checkpoint_identity(
         config,
         seed,
-        device=str(device),
+        commit,
         scratch=scratch,
-        argv=argv,
-        repo=repo,
-        inputs=list(paths.values()),
-        fold=fold,
-        view=camera,
-        manifests=manifests,
-        data_root=data_root,
+        inputs={
+            role: hashlib.sha256(path.read_bytes()).hexdigest()
+            for role, path in paths.items()
+        },
     )
+    checkpoints: Checkpoints | None = None
+    state = None
+    if checkpoint_dir is not None:
+        checkpoints = Checkpoints(checkpoint_dir, identity, checkpoint_every)
+        checkpoints.lock()  # held until this function returns or raises
     try:
-        torch.manual_seed(seed)
-        model = build_model(
-            recipe.arch,
-            pretrained=True,
-            anchor_sizes=ANCHORS.get(recipe.arch, ()),
-            score_floor=recipe.score_floor,
-            top_k=recipe.top_k,
+        if checkpoints is not None:
+            state = checkpoints.load()  # refuses another run's before anything
+        directory = run_module.start_run(
+            run_name or default_run_name(recipe, camera, fold, percent, seed),
+            config,
+            seed,
+            device=str(device),
+            scratch=scratch,
+            argv=argv,
+            repo=repo,
+            inputs=list(paths.values()),
+            fold=fold,
+            view=camera,
+            manifests=manifests,
+            data_root=data_root,
         )
-        val_records = subsample(records["validation"], recipe.val_frames)
-        train: Frames | TiledTrainSet
-        if spec is None:
-            train = Frames(records["train"], data_root, size)
-            val = Frames(val_records, data_root, size)
-            test = Frames(records["test"], data_root, size)
-        else:
-            train = TiledTrainSet(records["train"], data_root, spec, seed)
-            val = TiledFrames(val_records, data_root, spec)
-            test = TiledFrames(records["test"], data_root, spec)
+        try:
+            if checkpoints is None:
+                checkpoints = Checkpoints(
+                    directory / "checkpoints", identity, checkpoint_every
+                )
+                checkpoints.lock()
+            earlier = checkpoints.start_attempt(directory.name)
+            log = PredictionLog(checkpoints.predictions)
+            run_module.update_run(
+                directory,
+                checkpoint={
+                    "directory": str(checkpoints.directory),
+                    "every": checkpoints.every,
+                },
+                resumed_from_step=state["step"] if state else None,
+                resumes=len(earlier),
+                previous_attempts=earlier,
+                resumed_predictions=len(log.done),
+            )
+            torch.manual_seed(seed)
+            model = build_model(
+                recipe.arch,
+                pretrained=True,
+                anchor_sizes=ANCHORS.get(recipe.arch, ()),
+                score_floor=recipe.score_floor,
+                top_k=recipe.top_k,
+            )
+            val_records = subsample(records["validation"], recipe.val_frames)
+            train: Frames | TiledTrainSet
+            if spec is None:
+                train = Frames(records["train"], data_root, size)
+                val = Frames(val_records, data_root, size)
+                test = Frames(records["test"], data_root, size)
+            else:
+                train = TiledTrainSet(records["train"], data_root, spec, seed)
+                val = TiledFrames(val_records, data_root, spec)
+                test = TiledFrames(records["test"], data_root, spec)
 
-        def validate() -> float:
-            report = evaluate(
+            def validate() -> float:
+                report = evaluate(
+                    model,
+                    val,
+                    device,
+                    workers=recipe.workers,
+                    frame_top_k=recipe.frame_cap,
+                )
+                return report.overall.ap_iou25
+
+            history = train_baseline(
                 model,
-                val,
+                train,
+                recipe,
+                device=device,
+                validate=validate,
+                seed=seed,
+                checkpoints=checkpoints,
+            )
+            predict_to_file(
+                model,
+                test,
                 device,
+                log,
                 workers=recipe.workers,
                 frame_top_k=recipe.frame_cap,
             )
-            return report.overall.ap_iou25
-
-        history = train_baseline(
-            model, train, recipe, device=device, validate=validate, seed=seed
-        )
-        report = evaluate(
-            model,
-            test,
-            device,
-            workers=recipe.workers,
-            frame_top_k=recipe.frame_cap,
-        )
-        report.write_json(directory)
-        history["validation_frames"] = len(val)
-        if isinstance(train, TiledTrainSet):
-            history["train_tiles"] = len(train)
-            history["train_tile_candidates"] = train.n_candidates
-            history["train_boxes"] = train.n_boxes
-            history["train_boxes_unlabelled"] = train.n_unlabelled_boxes
-        history["test_predictions_tied"] = report.overall.n_predictions_tied
-        (directory / "training.json").write_text(
-            json.dumps(history, indent=2, allow_nan=True) + "\n"
-        )
-    except BaseException as error:
-        run_module.finish_run(directory, error)
-        raise
-    run_module.finish_run(directory)
+            # Scored from the file, so `aerial-search rescore` gives these numbers.
+            predictions = directory / PREDICTIONS_FILENAME
+            if checkpoints.predictions.resolve() != predictions.resolve():
+                shutil.copyfile(checkpoints.predictions, predictions)
+            report = score_file(predictions, records["test"])
+            report.write_json(directory)
+            history["validation_frames"] = len(val)
+            if isinstance(train, TiledTrainSet):
+                history["train_tiles"] = len(train)
+                history["train_tile_candidates"] = train.n_candidates
+                history["train_boxes"] = train.n_boxes
+                history["train_boxes_unlabelled"] = train.n_unlabelled_boxes
+            history["test_predictions_tied"] = report.overall.n_predictions_tied
+            (directory / "training.json").write_text(
+                json.dumps(history, indent=2, allow_nan=True) + "\n"
+            )
+        except BaseException as error:
+            run_module.finish_run(directory, error)
+            raise
+        run_module.finish_run(directory)
+    finally:
+        if checkpoints is not None:
+            checkpoints.unlock()
     return {
         "run": str(directory),
         "best_step": history["best_step"],

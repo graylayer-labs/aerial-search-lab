@@ -6,6 +6,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from aerial_search.data import checksums
 from aerial_search.data.fetch import WISARD_FULL, WISARD_SAMPLE, fetch_dataset
@@ -387,8 +388,38 @@ def build_parser() -> argparse.ArgumentParser:
         default="cpu",
         help="default and only device for a normal run: cpu (MPS diverged)",
     )
+    base.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        help="where checkpoints and test predictions go as they are made "
+        "(default: checkpoints/ in the run directory). If it holds a previous "
+        "attempt of the same run (config, seed, commit, manifests), that "
+        "attempt is resumed in a new run directory; another run's is refused. "
+        "On SageMaker: /opt/ml/checkpoints (#112)",
+    )
+    from aerial_search.experiments.baseline_experiment import CHECKPOINT_EVERY
+
+    base.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=CHECKPOINT_EVERY,
+        help="training steps between checkpoints (also one when training ends)",
+    )
     _add_fold_flag(base)
     _add_run_flags(base)
+
+    rescore = subcommands.add_parser(
+        "rescore",
+        help="score a finished detector run's test predictions file again, "
+        "without the model; refuses a file missing any test frame (#112)",
+    )
+    rescore.add_argument("run", type=Path, help="the run directory")
+    rescore.add_argument(
+        "--by-size",
+        action="store_true",
+        help="also break the score down by person size: sqrt(box area) in "
+        "source pixels, very_tiny <8, tiny 8-16, small 16-32, medium_plus >=32",
+    )
 
     compare = subcommands.add_parser(
         "compare-table",
@@ -663,10 +694,34 @@ def main(argv: list[str] | None = None) -> None:
                 run_name=args.run_name,
                 device=torch.device(args.device),
                 limit_frames=args.limit_frames,
+                checkpoint_dir=args.checkpoint_dir,
+                checkpoint_every=args.checkpoint_every,
             )
         except (run.ProvenanceError, ValueError) as error:
             raise SystemExit(f"refusing to start: {error}") from error
         print(json.dumps(summary, indent=2))
+        return
+
+    if args.command == "rescore":
+        from aerial_search.experiments import predictions
+
+        try:
+            record = json.loads((args.run / "run.json").read_text())
+            report = predictions.rescore(args.run)
+        except (OSError, ValueError, KeyError) as error:
+            raise SystemExit(f"refusing to re-score: {error}") from error
+        out: dict[str, Any] = {
+            "run": str(args.run),
+            "status": record.get("status"),
+            "scratch": record.get("scratch"),
+            "overall": report.overall.to_dict(),
+        }
+        if args.by_size:
+            out["by_size"] = {k: m.to_dict() for k, m in report.by_size.items()}
+            out["size_buckets_sqrt_area_px"] = report.config[
+                "size_buckets_sqrt_area_px"
+            ]
+        print(json.dumps(out, indent=2))
         return
 
     if args.command == "compare-table":
