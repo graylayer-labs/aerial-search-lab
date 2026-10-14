@@ -13,25 +13,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-      - run: uv sync --dev --locked
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run ty check
-      - run: uv run pytest
-
   # The org's shared CI (graylayer-labs/.github, ci-python.yml). Reports as
-  # "checks / checks". Runs beside the inline job above until main requires
-  # "checks / checks" (#107); then the inline job is removed.
+  # "checks / checks", the required check on main.
   shared:
     name: checks
     permissions:
