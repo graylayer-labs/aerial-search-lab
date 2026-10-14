@@ -429,6 +429,19 @@ def _write(directory: Path, record: dict[str, Any]) -> None:
     )
 
 
+def update_run(directory: Path, **fields: Any) -> None:
+    """Add or replace top-level fields of the run's `run.json`.
+
+    For facts known only after `start_run`, such as where a run keeps its
+    checkpoints and the step it resumed from. The status is not changed.
+    """
+    record = json.loads((directory / "run.json").read_text())
+    if "status" in fields:
+        raise ValueError("update_run does not change the status; use finish_run")
+    record.update(fields)
+    _write(directory, record)
+
+
 def finish_run(directory: Path, error: BaseException | None = None) -> None:
     """Mark the run `completed`, or `failed` with the error's type and message."""
     record = json.loads((directory / "run.json").read_text())

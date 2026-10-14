@@ -9,6 +9,11 @@ each links to the issue or pull request that holds the detail.
 ### 2026-10-14
 
 **New capability**
+- The fine-tuned detector saves checkpoints and its test predictions as it
+  goes, and a stopped run resumes with the same result as an uninterrupted
+  one, ready for spot instances; `aerial-search rescore` scores a finished
+  run's predictions again, by person size, without the model.
+  ([#112](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/112))
 - The fine-tuned detector can now run on overlapping tiles at native
   resolution (`--input tiled`), so 4–16 px people are no longer shrunk away;
   boxes are stitched back to source pixels and merged before the unchanged
