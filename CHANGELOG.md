@@ -18,6 +18,12 @@ each links to the issue or pull request that holds the detail.
   ([#113](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/113),
   [#128](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/128))
 
+**Rule change**
+- Cloud GPU runs no longer need a fresh owner approval each time: agents may
+  spend up to EUR 15 per run and EUR 60 per month, on SageMaker managed spot
+  only (AWS declined the on-demand quota).
+  ([#125](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/125))
+
 ### 2026-10-14
 
 **New capability**
