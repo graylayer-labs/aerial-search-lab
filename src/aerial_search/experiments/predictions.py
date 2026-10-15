@@ -8,6 +8,12 @@ skipped; a last line cut short by the stop is dropped, and an unreadable line
 anywhere else is refused. The run's score is computed from this file, so
 `rescore` gives the same numbers by construction, without the model.
 
+A file written beside a checkpoint starts with a header line,
+`{"model_id": ...}`, naming the trained weights that made it (SHA-256 of the
+weights). A resume uses the file only if that id equals its trained
+checkpoint's: S3 sync is asynchronous, so after a stop the file can sit beside
+another model's checkpoint, and two models' frames must never be mixed.
+
 Floats are written with Python's shortest round-trip repr, so the arrays read
 back are bit-identical to those written.
 """
@@ -34,6 +40,7 @@ __all__ = [
     "PREDICTIONS_FILENAME",
     "Prediction",
     "PredictionLog",
+    "read_model_id",
     "read_predictions",
     "rescore",
     "score_file",
@@ -61,11 +68,23 @@ def _decode(text: str) -> Prediction:
     )
 
 
-def _read(path: Path) -> tuple[dict[str, Prediction], int]:
-    """The complete predictions in `path` and the byte length they occupy."""
+def _header(raw: bytes) -> str | None:
+    """The model id if `raw` is the header line, else None."""
+    try:
+        line = json.loads(raw.decode())
+    except ValueError:
+        return None
+    if isinstance(line, dict) and set(line) == {"model_id"}:
+        return str(line["model_id"])
+    return None
+
+
+def _read(path: Path) -> tuple[dict[str, Prediction], int, str | None]:
+    """The complete predictions in `path`, the byte length they occupy (with
+    the header), and the header's model id (None if there is none)."""
     done: dict[str, Prediction] = {}
     if not path.exists():
-        return done, 0
+        return done, 0, None
     data = path.read_bytes()
     lines = data.split(b"\n")
     # A file ending in "\n" splits into a final empty piece; anything else in
@@ -73,7 +92,12 @@ def _read(path: Path) -> tuple[dict[str, Prediction], int]:
     # line whose newline was lost too: that frame is predicted again).
     complete = lines[:-1]
     end = 0
+    model_id = _header(complete[0]) if complete else None
+    if model_id is not None:
+        end = len(complete[0]) + 1
     for number, raw in enumerate(complete, start=1):
+        if number == 1 and model_id is not None:
+            continue
         try:
             prediction = _decode(raw.decode())
         except (ValueError, KeyError, TypeError) as error:
@@ -85,7 +109,7 @@ def _read(path: Path) -> tuple[dict[str, Prediction], int]:
             raise ValueError(f"{path} line {number}: {prediction.image_id} repeated")
         done[prediction.image_id] = prediction
         end += len(raw) + 1
-    return done, end
+    return done, end, model_id
 
 
 class PredictionLog:
@@ -93,10 +117,26 @@ class PredictionLog:
 
     def __init__(self, path: Path):
         self.path = path
-        self.done, end = _read(path)
+        self.done, end, self.model_id = _read(path)
         if path.exists() and path.stat().st_size != end:
             with path.open("r+b") as handle:  # drop the unfinished last line
                 handle.truncate(end)
+
+    def bind(self, model_id: str) -> None:
+        """Tie the file to the trained weights `model_id`: write the header if
+        the file is empty, refuse if it holds another model's predictions."""
+        if self.model_id == model_id:
+            return
+        if self.model_id is not None or self.done:
+            raise ValueError(
+                f"{self.path} holds predictions of model {self.model_id}, not "
+                f"of {model_id}; set it aside before predicting"
+            )
+        with self.path.open("w") as handle:
+            handle.write(json.dumps({"model_id": model_id}) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        self.model_id = model_id
 
     def append(self, prediction: Prediction) -> None:
         if prediction.image_id in self.done:
@@ -111,6 +151,15 @@ class PredictionLog:
 def read_predictions(path: Path) -> list[Prediction]:
     """Every complete prediction in the file, in file order."""
     return list(_read(path)[0].values())
+
+
+def read_model_id(path: Path) -> str | None:
+    """The model id in the file's header, or None (no file, no header)."""
+    if not path.exists():
+        return None
+    with path.open("rb") as handle:
+        first = handle.readline()
+    return _header(first[:-1]) if first.endswith(b"\n") else None
 
 
 def truths(records: Sequence[dict]) -> list[GroundTruth]:

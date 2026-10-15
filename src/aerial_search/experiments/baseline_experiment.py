@@ -19,6 +19,7 @@ import math
 import os
 import random
 import shutil
+import time
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -42,6 +43,7 @@ from aerial_search.experiments.head_experiment import record_boxes, select_recor
 from aerial_search.experiments.predictions import (
     PREDICTIONS_FILENAME,
     PredictionLog,
+    read_model_id,
     score_file,
 )
 
@@ -427,16 +429,32 @@ def _set_rng_state(state: dict[str, Any]) -> None:
     torch.set_rng_state(state["torch"])
 
 
+def weights_id(weights: dict[str, torch.Tensor]) -> str:
+    """SHA-256 over the weights' names, dtypes, shapes and bytes: the id of a
+    trained model, written in the header of the predictions it makes."""
+    digest = hashlib.sha256()
+    for name in sorted(weights):
+        tensor = weights[name].detach().cpu().contiguous()
+        digest.update(f"{name}\0{tensor.dtype}\0{tuple(tensor.shape)}\0".encode())
+        digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
+
+
 class Checkpoints:
     """One run's checkpoint in `directory`: `CHECKPOINT_FILENAME`, replaced
     atomically every `every` steps and once training ends, beside the test
-    predictions file. `load` refuses a checkpoint of another identity."""
+    predictions file. `load` refuses a checkpoint of another identity.
+
+    The trained checkpoint carries `model_id` (`weights_id` of its weights).
+    The predictions file's header names the model that made it; `load` sets
+    aside a file whose model is not the trained checkpoint's."""
 
     def __init__(self, directory: Path, identity: dict[str, Any], every: int):
         if every < 1:
             raise ValueError(f"checkpoint_every must be at least 1, not {every}")
         self.directory, self.identity, self.every = directory, identity, every
         self.state: dict[str, Any] | None = None
+        self.model_id: str | None = None  # set once a trained state exists
         self._lock: int | None = None
 
     def lock(self) -> None:
@@ -472,11 +490,7 @@ class Checkpoints:
         """The saved state, or None for a fresh start."""
         if not self.path.exists():
             if self.predictions.exists():
-                raise CheckpointError(
-                    f"{self.predictions} exists without {self.path}: test "
-                    "predictions with no trained model behind them. Use an "
-                    "empty checkpoint directory."
-                )
+                self._set_predictions_aside(f"{self.path.name} does not")
             return None
         state = torch.load(self.path, map_location="cpu", weights_only=True)
         if state.get("identity") != self.identity:
@@ -490,12 +504,41 @@ class Checkpoints:
                 "only with the config, seed, commit and manifests it started "
                 "with. Use another checkpoint directory."
             )
-        if self.predictions.exists() and state.get("phase") != "trained":
-            raise CheckpointError(
-                f"{self.predictions} exists but the checkpoint is mid-training"
-            )
+        if state.get("phase") != "trained":
+            if self.predictions.exists():
+                self._set_predictions_aside("the checkpoint is mid-training")
+        else:
+            # A checkpoint saved before model ids: the id of its weights.
+            self.model_id = state.get("model_id") or weights_id(state["model"])
+            if self.predictions.exists():
+                found = read_model_id(self.predictions)
+                if found != self.model_id:
+                    self._set_predictions_aside(
+                        f"it was made by another model ({found}), not the "
+                        f"trained checkpoint's ({self.model_id})"
+                    )
         self.state = state
         return state
+
+    def _set_predictions_aside(self, why: str) -> None:
+        """Move a predictions file that has no trained model behind it out of
+        the way, so the run can resume instead of failing on every restart.
+
+        S3 sync is asynchronous: after a stop it can hold the predictions
+        file beside an older checkpoint (or none). The predictions are the
+        trained model's, which resume rebuilds from the older state, so the
+        file is dropped from use, kept as `*.stale-<time>` for inspection,
+        and a warning says so.
+        """
+        stale = self.predictions.with_name(
+            f"{self.predictions.stem}.stale-{time.time_ns()}.jsonl"
+        )
+        os.replace(self.predictions, stale)
+        warnings.warn(
+            f"{self.predictions} exists but {why}; set aside as {stale.name} and "
+            "the test pass will start again",
+            stacklevel=3,
+        )
 
     def start_attempt(self, run_name: str) -> list[str]:
         """Record that `run_name` now works from this directory; return the
@@ -509,7 +552,26 @@ class Checkpoints:
         os.replace(partial, path)
         return earlier
 
+    def rewrite(self) -> None:
+        """Write `checkpoint.pt` again, unchanged, as a new file.
+
+        Called once the first test prediction is appended: S3 sync is
+        asynchronous, and a small predictions line can reach S3 before the
+        large trained checkpoint does. A fresh write queues the checkpoint
+        for upload again, behind that line, so a stop later finds both.
+        """
+        if not self.path.exists():
+            return
+        partial = self.path.with_suffix(".partial")
+        shutil.copyfile(self.path, partial)
+        with partial.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(partial, self.path)
+
     def save(self, **state: Any) -> None:
+        if state.get("phase") == "trained":
+            self.model_id = weights_id(state.get("model") or {})
+            state["model_id"] = self.model_id
         state = {**state, "identity": self.identity, "rng": _rng_state()}
         self.directory.mkdir(parents=True, exist_ok=True)
         partial = self.path.with_suffix(".partial")
@@ -748,10 +810,13 @@ def predict_to_file(
     *,
     workers: int = 0,
     frame_top_k: int = 100,
+    after_first: Callable[[], None] | None = None,
 ) -> int:
     """Predict the frames not yet in `log`, appending each as it is made.
 
-    Returns how many frames were already there (a resumed test pass)."""
+    `after_first` is called once, after the first frame of this pass is
+    appended. Returns how many frames were already there (a resumed test
+    pass)."""
     done = [str(r["image"]) in log.done for r in frames.records]
     if not all(done):
         for prediction in iter_predictions(
@@ -763,6 +828,9 @@ def predict_to_file(
             skip=done.__getitem__,
         ):
             log.append(prediction)
+            if after_first is not None:
+                after_first()
+                after_first = None
     return sum(done)
 
 
@@ -836,11 +904,11 @@ def run_baseline(
 
     if limit_frames and not scratch:
         raise ValueError("limit_frames needs a scratch run")
-    if device.type != "cpu":
+    if device.type not in ("cpu", "cuda"):
         if not scratch:
             raise ValueError(
-                f"a normal run must use the cpu, not {device.type}: Faster R-CNN "
-                "on MPS diverged (loss 7e7) and hung"
+                f"a normal run must use the cpu or cuda, not {device.type}: "
+                "Faster R-CNN on MPS diverged (loss 7e7) and hung"
             )
         warnings.warn(f"{device.type} is unreliable for this baseline", stacklevel=2)
     recipe = replace(recipe, device=device.type)
@@ -951,6 +1019,10 @@ def run_baseline(
                 seed=seed,
                 checkpoints=checkpoints,
             )
+            if checkpoints.model_id is None:  # no trained checkpoint was saved
+                checkpoints.model_id = weights_id(model.state_dict())
+            log.bind(checkpoints.model_id)
+            run_module.update_run(directory, model_id=checkpoints.model_id)
             predict_to_file(
                 model,
                 test,
@@ -958,6 +1030,7 @@ def run_baseline(
                 log,
                 workers=recipe.workers,
                 frame_top_k=recipe.frame_cap,
+                after_first=checkpoints.rewrite if checkpoint_dir else None,
             )
             # Scored from the file, so `aerial-search rescore` gives these numbers.
             predictions = directory / PREDICTIONS_FILENAME
