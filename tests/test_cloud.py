@@ -174,6 +174,7 @@ BASE: dict[str, Any] = dict(
     commit="a" * 40,
     source_sha256="b" * 64,
     manifests_sha256="c" * 64,
+    constraints_sha256="d" * 64,
     baseline_args=["rgb", "--percent", "10", "--fold", "220109_Baker"],
     role_arn="arn:aws:iam::123456789012:role/r",
     spot=True,
@@ -236,7 +237,7 @@ def test_everything_the_job_writes_is_under_sagemaker() -> None:
 
 def test_input_channels_are_data_in_fastfile_and_manifests() -> None:
     channels = {c["ChannelName"]: c for c in request()["InputDataConfig"]}
-    assert set(channels) == {"dataset", "manifests"}
+    assert set(channels) == {"dataset", "manifests", "constraints"}
     data = channels["dataset"]
     assert data["InputMode"] == "FastFile"
     assert (
@@ -245,6 +246,8 @@ def test_input_channels_are_data_in_fastfile_and_manifests() -> None:
     )
     manifests = channels["manifests"]["DataSource"]["S3DataSource"]["S3Uri"]
     assert manifests.endswith("/" + "c" * 16 + "/")
+    pins = channels["constraints"]["DataSource"]["S3DataSource"]["S3Uri"]
+    assert pins.endswith("sagemaker/inputs/constraints/" + "d" * 16 + "/")
 
 
 def test_the_job_is_tagged_with_project_and_stop_by() -> None:
@@ -277,6 +280,7 @@ def test_the_environment_attests_the_code_and_fits_the_limits() -> None:
     assert attestation["commit"] == "a" * 40
     assert attestation["source_sha256"] == "b" * 64
     assert attestation["manifests_sha256"] == "c" * 64
+    assert attestation["constraints_sha256"] == "d" * 64
     assert attestation["instance_type"] == "ml.g4dn.xlarge"
     assert attestation["spot"] is True
     assert json.loads(env["AERIAL_SEARCH_BASELINE_ARGS"]) == BASE["baseline_args"]
@@ -307,6 +311,9 @@ def write_manifests(path: Path, *, verified: bool = True, scratch: bool = False)
     (path / "other.jsonl").write_text("{}\n")
 
 
+PINS = b"pycocotools==2.0.11\ntorch==2.13.0\n"
+
+
 def launch(repo: Path | None, tmp_path: Path, **over: Any) -> Any:
     manifests = tmp_path / "manifests"
     if not manifests.exists():
@@ -332,6 +339,7 @@ def launch(repo: Path | None, tmp_path: Path, **over: Any) -> Any:
         image_uri=None,
         dry_run=True,
         session_factory=no_aws,
+        export_constraints=lambda root: PINS,
     )
     return launcher.launch(**{**args, **over})
 
@@ -364,6 +372,28 @@ def test_the_cli_default_archives_the_whole_repository(
     assert "tools/sagemaker_entry.py" in names
     assert "pyproject.toml" in names
     assert "src/aerial_search/a.py" in names
+
+
+def test_the_launch_ships_the_locked_versions_and_attests_them(
+    repo: Path, tmp_path: Path
+) -> None:
+    import hashlib
+
+    plan = launch(repo, tmp_path)
+    digest = hashlib.sha256(PINS).hexdigest()
+    attestation = json.loads(plan.request["Environment"]["AERIAL_SEARCH_ATTESTATION"])
+    assert attestation["constraints_sha256"] == digest
+    assert plan.constraints == PINS
+    assert plan.constraints_key == (
+        f"sagemaker/inputs/constraints/{digest[:16]}/constraints.txt"
+    )
+
+
+def test_the_constraints_come_from_uv_export_of_the_lock() -> None:
+    root = Path(__file__).resolve().parents[1]
+    text = source.export_constraints(root).decode()
+    assert "\npycocotools==" in text
+    assert "--frozen" in text and "--no-hashes" in text
 
 
 def test_a_dirty_tree_is_refused(repo: Path, tmp_path: Path) -> None:
@@ -447,9 +477,12 @@ def test_submission_uploads_the_source_then_creates_the_job(
 
 
 def job_env(code: Path, manifests: Path, **over: str) -> dict[str, str]:
+    import hashlib
+
     r = request(
         source_sha256=source.digest_dir(code),
         manifests_sha256=source.digest_dir(manifests),
+        constraints_sha256=hashlib.sha256(PINS).hexdigest(),
     )
     env = dict(r["Environment"])
     env["TRAINING_JOB_NAME"] = "ssl-aerial-exp-1"
@@ -464,9 +497,13 @@ def job(tmp_path: Path) -> dict[str, Path]:
     (code / "src" / "aerial_search" / "a.py").write_text("x = 1\n")
     manifests = tmp_path / "in" / "manifests"
     write_manifests(manifests)
+    pins = tmp_path / "in" / "constraints" / "constraints.txt"
+    pins.parent.mkdir(parents=True)
+    pins.write_bytes(PINS)
     return {
         "code": code,
         "manifests": manifests,
+        "constraints": pins,
         "data": tmp_path / "in" / "dataset",
         "checkpoints": tmp_path / "ckpt",
     }
@@ -478,6 +515,7 @@ def prepare(job: dict[str, Path], env: dict[str, str]) -> list[str]:
         code_root=job["code"],
         data_root=job["data"],
         manifests=job["manifests"],
+        constraints=job["constraints"],
         checkpoint_dir=job["checkpoints"],
     )
 
@@ -505,6 +543,62 @@ def test_modified_manifests_in_the_job_are_refused(job) -> None:
     (job["manifests"] / "other.jsonl").write_text("{}\n{}\n")
     with pytest.raises(entry.JobRefused, match="manifests"):
         prepare(job, env)
+
+
+def test_modified_constraints_in_the_job_are_refused(job) -> None:
+    env = job_env(job["code"], job["manifests"])
+    job["constraints"].write_bytes(PINS + b"numpy==2.0.0\n")
+    with pytest.raises(entry.JobRefused, match="constraints"):
+        prepare(job, env)
+
+
+@pytest.mark.parametrize(
+    ("spec", "name"),
+    [
+        ("torch>=2.13.0", "torch"),
+        ("torch~=2.13", "torch"),
+        ("torch<3", "torch"),
+        ("Torch==2.13.0", "torch"),
+        ("torchvision[extra] >= 0.28", "torchvision"),
+        ("torch ; sys_platform == 'linux'", "torch"),
+        ("torch@ https://example.com/torch.whl", "torch"),
+        ("torch-audio>=1", "torch-audio"),
+        ("Py_Coco.Tools>=2", "py-coco-tools"),
+        ("    # via torch", None),
+        ("", None),
+    ],
+)
+def test_requirement_names_are_parsed_per_pep_508(spec: str, name: str | None) -> None:
+    assert entry.requirement_name(spec) == name
+
+
+def test_torch_and_torchvision_from_the_container_are_never_reinstalled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = ["
+        '"torch~=2.13", "TorchVision[x]>=0.28", "torchmetrics>=1", '
+        '"pycocotools>=2.0.11"]\n'
+    )
+    dependencies = entry._dependencies(tmp_path)
+    assert dependencies == ["torchmetrics>=1", "pycocotools>=2.0.11"]
+    pins = tmp_path / "constraints.txt"
+    pins.write_text(
+        "torch==2.13.0\n    # via torchvision\ntorchvision==0.28.0 ; "
+        "sys_platform == 'linux'\npycocotools==2.0.11\n"
+    )
+    seen: list[list[str]] = []
+
+    def run(args: list[str], **_: Any) -> None:
+        seen.append(args)
+        used = Path(args[args.index("-c") + 1]).read_text()
+        assert "pycocotools==2.0.11" in used
+        assert "torch==" not in used and "torchvision==" not in used
+
+    monkeypatch.setattr(entry.subprocess, "run", run)
+    entry._install(dependencies, pins)
+    assert seen and seen[0][-2:] == dependencies
+    assert not any(a.startswith(("torch>", "torch=", "torchvision")) for a in seen[0])
 
 
 def test_every_attempt_gets_a_run_name_no_earlier_attempt_used(job) -> None:

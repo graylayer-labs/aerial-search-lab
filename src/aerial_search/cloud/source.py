@@ -82,3 +82,29 @@ def archive_commit(repo: Path, commit: str) -> tuple[bytes, str]:
             assert handle is not None
             files.append((member.name, bool(member.mode & 0o111), handle.read()))
     return gzip.compress(result.stdout, mtime=0), digest_files(files)
+
+
+EXPORT = ("uv", "export", "--frozen", "--no-hashes", "--no-dev", "--no-emit-project")
+
+
+def export_constraints(repo: Path) -> bytes:
+    """The locked versions of every runtime dependency, from `uv.lock`.
+
+    The job installs with these as pip constraints, so it runs the versions
+    the laptop's tests ran, not whatever `>=` resolves to that day. The tree
+    is clean when the launcher calls this, so the lock is the commit's.
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("GIT_") and k != "VIRTUAL_ENV"
+    }
+    try:
+        result = subprocess.run(
+            list(EXPORT), cwd=repo, capture_output=True, env=env, check=False
+        )
+    except OSError as error:
+        raise RuntimeError(f"cannot run uv: {error}") from error
+    if result.returncode != 0:
+        raise RuntimeError(f"`{' '.join(EXPORT)}` failed: {result.stderr.decode()}")
+    return result.stdout

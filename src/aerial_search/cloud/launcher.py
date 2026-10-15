@@ -71,6 +71,10 @@ def job_name(logical_run: str, attempt: int) -> str:
     return prefix + slug[: 63 - len(prefix) - len(suffix)].rstrip("-") + suffix
 
 
+def constraints_prefix(constraints_sha256: str) -> str:
+    return f"sagemaker/inputs/constraints/{constraints_sha256[:16]}/"
+
+
 def build_request(
     *,
     logical_run: str,
@@ -78,6 +82,7 @@ def build_request(
     commit: str,
     source_sha256: str,
     manifests_sha256: str,
+    constraints_sha256: str,
     baseline_args: list[str],
     role_arn: str,
     spot: bool,
@@ -109,6 +114,7 @@ def build_request(
         "commit": commit,
         "source_sha256": source_sha256,
         "manifests_sha256": manifests_sha256,
+        "constraints_sha256": constraints_sha256,
         "instance_type": INSTANCE_TYPE,
         "spot": spot,
         "scratch": scratch,
@@ -142,6 +148,17 @@ def build_request(
                         "S3Uri": _s3(
                             f"sagemaker/inputs/manifests/{manifests_sha256[:16]}/"
                         ),
+                        "S3DataDistributionType": "FullyReplicated",
+                    }
+                },
+            },
+            {
+                "ChannelName": "constraints",
+                "InputMode": "File",
+                "DataSource": {
+                    "S3DataSource": {
+                        "S3DataType": "S3Prefix",
+                        "S3Uri": _s3(constraints_prefix(constraints_sha256)),
                         "S3DataDistributionType": "FullyReplicated",
                     }
                 },
@@ -195,6 +212,8 @@ class Plan:
     source_key: str
     manifests_dir: Path
     manifests_prefix: str
+    constraints: bytes
+    constraints_key: str
 
 
 def check_manifests(manifests: Path, scratch: bool) -> None:
@@ -240,6 +259,8 @@ def _upload(plan: Plan, s3: Any) -> None:
     already there. Only `sagemaker/` is written."""
     if not _exists(s3, plan.source_key):
         s3.put_object(Bucket=BUCKET, Key=plan.source_key, Body=plan.archive)
+    if not _exists(s3, plan.constraints_key):
+        s3.put_object(Bucket=BUCKET, Key=plan.constraints_key, Body=plan.constraints)
     marker = plan.manifests_prefix + source.MARKER
     if not _exists(s3, marker):
         for path in sorted(plan.manifests_dir.rglob("*")):
@@ -272,6 +293,7 @@ def launch(
     session_factory: Callable[[], Any],
     spot_price_usd: float = cost.SPOT_USD_PER_HOUR,
     today: date | None = None,
+    export_constraints: Callable[[Path], bytes] = source.export_constraints,
 ) -> Plan:
     """Check everything, build the job, and send it unless `dry_run`."""
     state = run_module.code_state(scratch=scratch, repo=repo)
@@ -303,6 +325,8 @@ def launch(
     code_root = run_module._repo_root((repo or run_module._code_location()).resolve())
     archive, digest = source.archive_commit(code_root, commit)
     manifests_digest = source.digest_dir(manifests)
+    constraints = export_constraints(code_root)
+    constraints_digest = hashlib.sha256(constraints).hexdigest()
     if role_arn is None and session is not None:
         account = session.client("sts", region_name=REGION).get_caller_identity()[
             "Account"
@@ -314,6 +338,7 @@ def launch(
         commit=commit,
         source_sha256=digest,
         manifests_sha256=manifests_digest,
+        constraints_sha256=constraints_digest,
         baseline_args=baseline_args,
         role_arn=role_arn or f"arn:aws:iam::<account-id>:role/{ROLE_NAME}",
         spot=spot,
@@ -329,6 +354,8 @@ def launch(
         f"sagemaker/source/{commit[:12]}-{digest[:12]}/sourcedir.tar.gz",
         manifests,
         f"sagemaker/inputs/manifests/{manifests_digest[:16]}/",
+        constraints,
+        constraints_prefix(constraints_digest) + "constraints.txt",
     )
     if session is not None:
         _upload(plan, session.client("s3", region_name=REGION))
