@@ -6,6 +6,18 @@ each links to the issue or pull request that holds the detail.
 
 ## Epic: Domain adaptation (in progress)
 
+### 2026-10-15
+
+**New capability**
+- `aerial-search sagemaker-train` runs one training run as a SageMaker
+  managed-spot job on a T4 GPU: code pinned to a `main` commit and checked
+  in the job and on fetch, data verified in the job, checkpoints in S3 so an
+  interrupted job resumes, and a cost guard that refuses a run whose worst
+  case passes EUR 15 or would take the month past EUR 60. No cloud run yet:
+  AWS declined the on-demand GPU quota and the spot quota is pending.
+  ([#113](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/113),
+  [#128](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/128))
+
 ### 2026-10-14
 
 **New capability**
