@@ -220,7 +220,9 @@ def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
     ]
     assert appended == tests  # the first two once, then only the rest
     lines = (run_dir(tmp_path, "second") / pr.PREDICTIONS_FILENAME).read_text()
-    assert [json.loads(x)["image"] for x in lines.splitlines()] == tests
+    header, *frames = lines.splitlines()
+    assert list(json.loads(header)) == ["model_id"]  # the trained weights' id
+    assert [json.loads(x)["image"] for x in frames] == tests
     record = json.loads((run_dir(tmp_path, "second") / "run.json").read_text())
     assert record["resumed_from_step"] == 4 and record["resumed_predictions"] == 2
 
