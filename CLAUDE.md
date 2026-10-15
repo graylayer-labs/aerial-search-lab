@@ -498,8 +498,9 @@ to its issue or PR. No version numbers.
   scratch or unfinished ones. See `docs/detection-head-design.md`.
 - **Cloud run (SageMaker, #113).** For a run too long for the laptop. The
   owner approved up to EUR 15 per run and EUR 60 per calendar month on
-  2026-10-14 (#109); the instance is `ml.g4dn.xlarge` on managed spot. Always
-  look first:
+  2026-10-14 (#109); the instance is `ml.g4dn.xlarge` on managed spot.
+  Spot only: AWS declined the on-demand quota (2026-10-15). Always look
+  first:
 
   ```bash
   uv run aerial-search sagemaker-train rgb --percent 10 --fold 220109_Baker \
