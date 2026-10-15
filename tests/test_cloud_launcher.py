@@ -367,3 +367,30 @@ def running(instance: str = "ml.g4dn.xlarge", seconds: int = 7200) -> dict:
         "ResourceConfig": {"InstanceType": instance},
         "StoppingCondition": {"MaxRuntimeInSeconds": seconds},
     }
+
+
+def test_running_jobs_are_listed_in_progress_and_described() -> None:
+    seen: dict[str, Any] = {}
+
+    class Pages:
+        def paginate(self, **kw: Any) -> Any:
+            seen.update(kw)
+            yield {"TrainingJobSummaries": [{"TrainingJobName": "a"}]}
+            yield {"TrainingJobSummaries": [{"TrainingJobName": "b"}]}
+
+    class Sm:
+        def get_paginator(self, name: str) -> Any:
+            assert name == "list_training_jobs"
+            return Pages()
+
+        def describe_training_job(self, TrainingJobName: str) -> Any:
+            return {**running(), "TrainingJobName": TrainingJobName}
+
+    class Session:
+        def client(self, name: str, **_: Any) -> Any:
+            assert name == "sagemaker"
+            return Sm()
+
+    jobs = launcher.running_jobs(Session())
+    assert [j["TrainingJobName"] for j in jobs] == ["a", "b"]
+    assert seen["StatusEquals"] == "InProgress"
