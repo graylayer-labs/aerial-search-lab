@@ -145,6 +145,27 @@ def _package_versions() -> dict[str, str | None]:
     return versions
 
 
+def _accelerator(device: str) -> dict[str, Any]:
+    """GPU name, CUDA and cuDNN versions and the determinism flags of a CUDA
+    run; None for each on any other device. A GPU run's numbers may differ
+    from a CPU run's, so the row must say which hardware made it."""
+    if not device.startswith("cuda"):
+        return {"gpu": None, "cuda": None, "cudnn": None, "determinism": None}
+    import torch
+
+    return {
+        "gpu": torch.cuda.get_device_name(torch.device(device)),
+        "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version(),
+        "determinism": {
+            "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+            "cudnn_deterministic": torch.backends.cudnn.deterministic,
+            "cudnn_benchmark": torch.backends.cudnn.benchmark,
+            "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        },
+    }
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     try:
@@ -471,6 +492,7 @@ def start_run(
             "processor": platform.machine(),
             "python": platform.python_version(),
             "device": device,
+            **_accelerator(device),
         },
         "packages": _package_versions(),
         "data": data_record,
