@@ -1,11 +1,17 @@
 """The SageMaker launcher, without AWS (#113)."""
 
+import hashlib
+import io
 import json
+import subprocess
+import tarfile
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from aerial_search.cloud import launcher
+from aerial_search import run as run_module
+from aerial_search.cloud import cost, launcher, source
 
 # --- the request ------------------------------------------------------------------
 
@@ -134,3 +140,197 @@ def test_the_job_runs_the_entry_point_from_the_pinned_source() -> None:
     assert json.loads(hp["sagemaker_submit_directory"]).endswith(
         "/" + "a" * 12 + "-" + "b" * 12 + "/sourcedir.tar.gz"
     )
+
+
+def run_git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+# --- the launch: refusals and the dry run -----------------------------------------
+
+
+def write_manifests(path: Path, *, verified: bool = True, scratch: bool = False):
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "data_quality.json").write_text(
+        json.dumps(
+            {
+                "provenance": {"commit": "abc", "scratch": scratch},
+                "data": {"verified": verified, "directories": ["d1"]},
+            }
+        )
+    )
+    (path / "other.jsonl").write_text("{}\n")
+
+
+PINS = b"pycocotools==2.0.11\ntorch==2.13.0\n"
+
+
+def launch(repo: Path | None, tmp_path: Path, **over: Any) -> Any:
+    manifests = tmp_path / "manifests"
+    if not manifests.exists():
+        write_manifests(manifests)
+
+    def no_aws() -> Any:
+        raise AssertionError("a dry run must not touch AWS")
+
+    args: dict[str, Any] = dict(
+        repo=repo,
+        logical_run="exp",
+        baseline_args=["rgb", "--percent", "10", "--fold", "f"],
+        manifests=manifests,
+        scratch=False,
+        attempt=1,
+        spot=True,
+        max_runtime_hours=12.0,
+        max_wait_hours=18.0,
+        expected_hours=3.0,
+        eur_per_usd=1.0,
+        month_to_date_eur=0.0,
+        role_arn="arn:aws:iam::1:role/r",
+        image_uri=None,
+        dry_run=True,
+        session_factory=no_aws,
+        export_constraints=lambda root: PINS,
+        list_running=lambda session: [],
+    )
+    return launcher.launch(**{**args, **over})
+
+
+def test_a_dry_run_builds_the_whole_request_and_sends_nothing(
+    repo: Path, tmp_path: Path
+) -> None:
+    plan = launch(repo, tmp_path)
+    assert plan.request["TrainingJobName"] == "ssl-aerial-exp-1"
+    assert plan.estimate.estimate_usd == pytest.approx(1.2)
+    attestation = json.loads(plan.request["Environment"]["AERIAL_SEARCH_ATTESTATION"])
+    assert attestation["commit"] == run_git(repo, "rev-parse", "HEAD")
+
+
+def test_the_cli_default_archives_the_whole_repository(
+    repo: Path, tmp_path: Path, monkeypatch
+) -> None:
+    (repo / "tools").mkdir()
+    (repo / "tools" / "sagemaker_entry.py").write_text("")
+    (repo / "pyproject.toml").write_text("[project]\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-m", "entry")
+    run_git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    monkeypatch.setattr(
+        run_module, "_code_location", lambda: repo / "src" / "aerial_search"
+    )
+    plan = launch(None, tmp_path)
+    with tarfile.open(fileobj=io.BytesIO(plan.archive), mode="r:gz") as tar:
+        names = tar.getnames()
+    assert "tools/sagemaker_entry.py" in names
+    assert "pyproject.toml" in names
+    assert "src/aerial_search/a.py" in names
+
+
+def test_the_launch_ships_the_locked_versions_and_attests_them(
+    repo: Path, tmp_path: Path
+) -> None:
+
+    plan = launch(repo, tmp_path)
+    digest = hashlib.sha256(PINS).hexdigest()
+    attestation = json.loads(plan.request["Environment"]["AERIAL_SEARCH_ATTESTATION"])
+    assert attestation["constraints_sha256"] == digest
+    assert plan.constraints == PINS
+    assert plan.constraints_key == (
+        f"sagemaker/inputs/constraints/{digest[:16]}/constraints.txt"
+    )
+
+
+def test_the_constraints_come_from_uv_export_of_the_lock() -> None:
+    root = Path(__file__).resolve().parents[1]
+    text = source.export_constraints(root).decode()
+    assert "\npycocotools==" in text
+    assert "--frozen" in text and "--no-hashes" in text
+
+
+def test_a_dirty_tree_is_refused(repo: Path, tmp_path: Path) -> None:
+    (repo / "src" / "aerial_search" / "a.py").write_text("x = 3\n")
+    with pytest.raises(run_module.ProvenanceError, match="uncommitted"):
+        launch(repo, tmp_path)
+
+
+def test_a_commit_not_on_origin_main_is_refused(repo: Path, tmp_path: Path) -> None:
+    (repo / "b.py").write_text("")
+    run_git(repo, "add", "b.py")
+    run_git(repo, "commit", "-m", "b")
+    with pytest.raises(run_module.ProvenanceError, match="origin/main"):
+        launch(repo, tmp_path)
+
+
+def test_a_scratch_cloud_run_may_be_off_main_but_never_dirty(
+    repo: Path, tmp_path: Path
+) -> None:
+    (repo / "b.py").write_text("")
+    run_git(repo, "add", "b.py")
+    run_git(repo, "commit", "-m", "b")
+    assert launch(repo, tmp_path, scratch=True).request
+    (repo / "b.py").write_text("changed")
+    with pytest.raises(run_module.ProvenanceError, match="commit"):
+        launch(repo, tmp_path, scratch=True)
+
+
+def test_unverified_or_scratch_manifests_are_refused_before_submission(
+    repo: Path, tmp_path: Path
+) -> None:
+    write_manifests(tmp_path / "m2", verified=False)
+    with pytest.raises(run_module.ProvenanceError, match="verified"):
+        launch(repo, tmp_path, manifests=tmp_path / "m2")
+    write_manifests(tmp_path / "m3", scratch=True)
+    with pytest.raises(run_module.ProvenanceError, match="scratch"):
+        launch(repo, tmp_path, manifests=tmp_path / "m3")
+
+
+def test_the_cost_guard_runs_before_anything_is_sent(
+    repo: Path, tmp_path: Path
+) -> None:
+    with pytest.raises(cost.CostRefused):
+        launch(repo, tmp_path, max_runtime_hours=24.0, max_wait_hours=30.0)
+
+
+def test_submission_uploads_the_source_then_creates_the_job(
+    repo: Path, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, Any]] = []
+
+    class S3:
+        def head_object(self, **kw: Any) -> Any:
+            calls.append(("head", kw["Key"]))
+            raise launcher.NotFound()
+
+        def put_object(self, **kw: Any) -> None:
+            calls.append(("put", kw["Key"]))
+
+        def upload_file(self, filename: str, bucket: str, key: str) -> None:
+            calls.append(("upload", key))
+
+    class Sm:
+        def create_training_job(self, **kw: Any) -> Any:
+            calls.append(("create", kw["TrainingJobName"]))
+            return {"TrainingJobArn": "arn"}
+
+    class Session:
+        def client(self, name: str, **_: Any) -> Any:
+            return {"s3": S3(), "sagemaker": Sm()}[name]
+
+    launch(repo, tmp_path, dry_run=False, session_factory=Session)
+    kinds = [k for k, _ in calls]
+    assert kinds[-1] == "create"
+    assert "put" in kinds[:-1]
+    assert ("create", "ssl-aerial-exp-1") in calls
+    assert all(key.startswith("sagemaker/") for kind, key in calls if kind != "create")
+
+
+def test_unreadable_manifests_are_refused_unless_scratch(tmp_path: Path) -> None:
+    with pytest.raises(run_module.ProvenanceError, match="cannot read"):
+        launcher.check_manifests(tmp_path, scratch=False)
+    launcher.check_manifests(tmp_path, scratch=True)

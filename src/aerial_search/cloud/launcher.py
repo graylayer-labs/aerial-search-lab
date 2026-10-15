@@ -16,10 +16,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
-from aerial_search.cloud import safe_name
+from aerial_search import run as run_module
+from aerial_search.cloud import cost, safe_name, source
 
 REGION = "eu-west-1"
 BUCKET = "ssl-aerial-person-detection-data-eu-west1"
@@ -195,3 +199,183 @@ def build_request(
         if len(value) > 512:
             raise ValueError(f"environment variable {key} is over 512 characters")
     return request
+
+
+@dataclass
+class Plan:
+    request: dict[str, Any]
+    estimate: cost.Estimate
+    archive: bytes
+    source_key: str
+    manifests_dir: Path
+    manifests_prefix: str
+    constraints: bytes
+    constraints_key: str
+
+
+def check_manifests(manifests: Path, scratch: bool) -> None:
+    """Refuse early what the job would refuse: manifests that are not from a
+    normal, verified `prepare`. (The job still verifies the data itself.)"""
+    path = manifests / "data_quality.json"
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        if scratch:
+            return
+        raise run_module.ProvenanceError(f"cannot read {path}: {error}") from None
+    if scratch:
+        return
+    provenance, data = record.get("provenance"), record.get("data")
+    if not isinstance(provenance, dict) or provenance.get("scratch") is not False:
+        raise run_module.ProvenanceError(
+            f"{path} comes from a scratch `prepare`; regenerate it from a clean "
+            "tree on main, or pass --scratch"
+        )
+    if not isinstance(data, dict) or data.get("verified") is not True:
+        raise run_module.ProvenanceError(
+            f"{path} says its data was not verified (data.verified is not true)"
+        )
+
+
+def running_jobs(session: Any) -> list[dict[str, Any]]:
+    """Every SageMaker training job in progress in the region, described
+    (account-wide, like the month-to-date spend)."""
+    sm = session.client("sagemaker", region_name=REGION)
+    names = [
+        summary["TrainingJobName"]
+        for page in sm.get_paginator("list_training_jobs").paginate(
+            StatusEquals="InProgress"
+        )
+        for summary in page["TrainingJobSummaries"]
+    ]
+    return [sm.describe_training_job(TrainingJobName=name) for name in names]
+
+
+def _exists(s3: Any, key: str) -> bool:
+    from botocore.exceptions import ClientError
+
+    try:
+        s3.head_object(Bucket=BUCKET, Key=key)
+    except NotFound:
+        return False
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return False
+        raise
+    return True
+
+
+def _upload(plan: Plan, s3: Any) -> None:
+    """Content-addressed uploads: the source and the manifests are skipped if
+    already there. Only `sagemaker/` is written."""
+    if not _exists(s3, plan.source_key):
+        s3.put_object(Bucket=BUCKET, Key=plan.source_key, Body=plan.archive)
+    if not _exists(s3, plan.constraints_key):
+        s3.put_object(Bucket=BUCKET, Key=plan.constraints_key, Body=plan.constraints)
+    marker = plan.manifests_prefix + source.MARKER
+    if not _exists(s3, marker):
+        for path in sorted(plan.manifests_dir.rglob("*")):
+            if path.is_file():
+                key = (
+                    plan.manifests_prefix
+                    + path.relative_to(plan.manifests_dir).as_posix()
+                )
+                s3.upload_file(str(path), BUCKET, key)
+        s3.put_object(Bucket=BUCKET, Key=marker, Body=b"")
+
+
+def launch(
+    *,
+    repo: Path | None,
+    logical_run: str,
+    baseline_args: list[str],
+    manifests: Path,
+    scratch: bool,
+    attempt: int,
+    spot: bool,
+    max_runtime_hours: float,
+    max_wait_hours: float,
+    expected_hours: float,
+    eur_per_usd: float,
+    month_to_date_eur: float | None,
+    role_arn: str | None,
+    image_uri: str | None,
+    dry_run: bool,
+    session_factory: Callable[[], Any],
+    spot_price_usd: float = cost.SPOT_USD_PER_HOUR,
+    today: date | None = None,
+    export_constraints: Callable[[Path], bytes] = source.export_constraints,
+    list_running: Callable[[Any], list[dict[str, Any]]] | None = None,
+) -> Plan:
+    """Check everything, build the job, and send it unless `dry_run`."""
+    state = run_module.code_state(scratch=scratch, repo=repo)
+    commit = state["commit"]
+    if not commit or state["dirty"] or state["hidden_changes"]:
+        raise run_module.ProvenanceError(
+            "the job runs a commit, not the working tree: commit your changes "
+            "first (even a scratch cloud run)"
+        )
+    check_manifests(manifests, scratch)
+    session = None if dry_run else session_factory()
+    if month_to_date_eur is None and session is not None:
+        month_to_date_eur = cost.month_to_date_eur(
+            session.client("ce", region_name="us-east-1"),
+            eur_per_usd=eur_per_usd,
+            today=today or datetime.now(UTC).date(),
+        )
+    running_eur = None
+    if session is not None:
+        running_eur = cost.running_jobs_eur(
+            (list_running or running_jobs)(session), eur_per_usd=eur_per_usd
+        )
+    estimate = cost.check(
+        expected_hours=expected_hours,
+        max_runtime_hours=max_runtime_hours,
+        spot=spot,
+        month_to_date_eur=month_to_date_eur,
+        running_jobs_eur=running_eur,
+        month_required=not dry_run,
+        eur_per_usd=eur_per_usd,
+        spot_price_usd=spot_price_usd,
+    )
+    # The whole repository: the entry point and pyproject.toml sit outside
+    # the package, which is where the running code (the CLI default) lives.
+    code_root = run_module._repo_root((repo or run_module._code_location()).resolve())
+    archive, digest = source.archive_commit(code_root, commit)
+    manifests_digest = source.digest_dir(manifests)
+    constraints = export_constraints(code_root)
+    constraints_digest = hashlib.sha256(constraints).hexdigest()
+    if role_arn is None and session is not None:
+        account = session.client("sts", region_name=REGION).get_caller_identity()[
+            "Account"
+        ]
+        role_arn = f"arn:aws:iam::{account}:role/{ROLE_NAME}"
+    request = build_request(
+        logical_run=logical_run,
+        attempt=attempt,
+        commit=commit,
+        source_sha256=digest,
+        manifests_sha256=manifests_digest,
+        constraints_sha256=constraints_digest,
+        baseline_args=baseline_args,
+        role_arn=role_arn or f"arn:aws:iam::<account-id>:role/{ROLE_NAME}",
+        spot=spot,
+        max_runtime_hours=max_runtime_hours,
+        max_wait_hours=max_wait_hours,
+        scratch=scratch,
+        image_uri=image_uri,
+    )
+    plan = Plan(
+        request,
+        estimate,
+        archive,
+        f"sagemaker/source/{commit[:12]}-{digest[:12]}/sourcedir.tar.gz",
+        manifests,
+        f"sagemaker/inputs/manifests/{manifests_digest[:16]}/",
+        constraints,
+        constraints_prefix(constraints_digest) + "constraints.txt",
+    )
+    if session is not None:
+        _upload(plan, session.client("s3", region_name=REGION))
+        session.client("sagemaker", region_name=REGION).create_training_job(**request)
+    return plan
