@@ -480,10 +480,12 @@ to its issue or PR. No version numbers.
   frames only the fold manifests reference (no partner in the other camera);
   `uv run aerial-search check-cache <cache-dir> data/manifests/wisard-full`
   lists any frame the manifests reference that the cache lacks and exits 1. See
-  `docs/forward-pass-cost.md`. **The feature cache is the one exception to
-  "the run directory is the only place an experiment writes":** features go
-  to the cache directory, which holds its sessions' run directories under
-  `runs/`. Each feature file stays traceable to a commit through its
+  `docs/forward-pass-cost.md`. **The feature cache and the checkpoint
+  directory are the two exceptions to "the run directory is the only place an
+  experiment writes":** features go to the cache directory, which holds its
+  sessions' run directories under `runs/`; `train-baseline --checkpoint-dir`
+  (default `checkpoints/` in the run directory) holds the checkpoint, the test
+  predictions file and `attempts.json` (#112). Each feature file stays traceable to a commit through its
   `index.jsonl` line (source SHA-256, the writing run's name and commit), that
   run's `run.json` (clean `main` unless scratch, data verification), and
   `cache.json` (weights, revision, settings).
@@ -494,6 +496,45 @@ to its issue or PR. No version numbers.
   scratch or incomplete cache. `uv run aerial-search head-table <dir>`
   tabulates completed runs per fold with the mean and spread, and refuses
   scratch or unfinished ones. See `docs/detection-head-design.md`.
+- **Cloud run (SageMaker, #113).** For a run too long for the laptop. The
+  owner approved up to EUR 15 per run and EUR 60 per calendar month on
+  2026-10-14 (#109); the instance is `ml.g4dn.xlarge` on managed spot.
+  Spot only: AWS declined the on-demand quota (2026-10-15). Always look
+  first:
+
+  ```bash
+  uv run aerial-search sagemaker-train rgb --percent 10 --fold 220109_Baker \
+    --input tiled --month-to-date-eur 0 --dry-run     # prints the request and cost
+  uv run aerial-search sagemaker-train <same flags> --attempt 1   # sends it
+  uv run aerial-search sagemaker-fetch <job-name>     # run dir into outputs/
+  ```
+
+  It takes `train-baseline`'s flags (device defaults to cuda; no `--data-root`
+  or `--checkpoint-dir`: the job sets them). Before sending anything it
+  refuses a dirty tree, a HEAD not on `origin/main` (`--scratch` may be off
+  main, never dirty), manifests that are not from a normal verified
+  `prepare`, and the cost guard: estimate is price x `--expected-hours`
+  (default from the laptop figures), worst case is the on-demand price x
+  `--max-runtime-hours` (default 12); it refuses a worst case over EUR 15, or
+  month-to-date plus the estimate plus the worst case of every SageMaker job
+  still running over EUR 60. Month-to-date is read from Cost
+  Explorer (account-wide SageMaker spend, up to a day late) or given with
+  `--month-to-date-eur`; if unreadable it refuses. Dollars become euros at
+  `--eur-per-usd` (default 0.95, high on purpose). The guard estimates; the
+  account's budget and the role's conditions enforce. The job's source is
+  `git archive` of the commit, with its digest sent along; the job hashes the
+  code, manifests and locked dependency list (`uv export`, installed with
+  `pip -c`, container torch kept) it received, refuses on a difference, and
+  `run.json`
+  records the commit, instance type, spot or on-demand and job name under
+  `attestation`, with the data verified in the job as on the laptop. Each
+  attempt gets a new run name (`<run>-a<n>-<UTC time>`); the checkpoints live at
+  `s3://<bucket>/sagemaker/checkpoints/<run>/`, fixed per run, so a job
+  resubmitted with `--attempt 2` resumes. Billable seconds are only known
+  afterwards: `sagemaker-fetch` writes them to `cloud-job.json` beside
+  `run.json`, after re-archiving the attested commit and checking its digest
+  and that it is on `origin/main`. Design and limits:
+  `src/aerial_search/cloud/entry.py`.
 - Any number quoted in a doc or README must be reproducible from a committed
   config. If a number cannot be traced, remove it.
 - Report negative results. State what was expected, what happened, and the
