@@ -141,6 +141,12 @@ Two standing issues never close: "Reusable tooling candidates" (#9) and
 - Short laptop runs.
 - Free or near-free AWS: S3 storage for project data, and free-tier
   instances.
+- Cloud GPU runs through the `aws-manager` agent, up to EUR 15 per run and
+  EUR 60 per calendar month, after asking it for the month-to-date spend.
+  The owner set these limits on 2026-10-14 (#109) and confirmed them here on
+  2026-10-15 (#125). Use SageMaker training jobs on managed spot with
+  checkpoints, so a run always terminates and an interruption resumes. Spot
+  only: AWS declined the on-demand quota on 2026-10-15 (#96).
 
 ### Review before merge
 
@@ -156,8 +162,8 @@ CI proves the code runs. It does not prove a result is valid.
 
 ## Ask the owner first
 
-- Spending real money: paid cloud instances, SageMaker, or any paid service.
-  Give the reason a laptop run will not do and a cost estimate.
+- Spending beyond the cloud GPU limits under "Do freely", or on any other
+  paid service. Give the reason a laptop run will not do and a cost estimate.
 - Deleting raw data under `data/raw/` or anything in S3, or anything else
   that cannot be recovered.
 - Force-pushing, rewriting history, or deleting a remote branch that has
@@ -166,8 +172,8 @@ CI proves the code runs. It does not prove a result is valid.
 - Anything public beyond the repo itself: blog posts, releases, repo
   visibility or settings, making the board public.
 - Installing third-party plugins, skills, hooks, or MCP servers.
-- A laptop run expected to take over an hour. Prefer a cloud instance for
-  long runs, which is a spending request.
+- A laptop run expected to take over an hour. Prefer a cloud GPU run within
+  the limits under "Do freely".
 - Merging a PR that the reviewer flagged.
 - Changing branch protection or other repository settings.
 
