@@ -8,16 +8,21 @@ instance's dollar price at a configurable rate.
 - worst case = on-demand price x `MaxRuntimeInSeconds`, which is what the job
   can bill at most (spot is never dearer than on-demand)
 - refuse if the worst case passes the per-run limit, or if month-to-date spend
-  plus the estimate passes the month limit
+  plus the worst case of the SageMaker jobs running now plus the estimate
+  passes the month limit (Cost Explorer lags by up to a day, so a running
+  job may not be in month-to-date yet; counting it whole errs towards
+  refusing)
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
 ON_DEMAND_USD_PER_HOUR = 0.822  # ml.g4dn.xlarge, eu-west-1, 2026-10-14
+ON_DEMAND_USD = {"ml.g4dn.xlarge": ON_DEMAND_USD_PER_HOUR}  # for running jobs
 SPOT_USD_PER_HOUR = 0.40  # top of the 0.33-0.40 estimate; AWS publishes none
 EUR_PER_USD = 0.95  # deliberately high so the guard errs towards refusing
 RUN_LIMIT_EUR = 15.0
@@ -49,6 +54,7 @@ class Estimate:
     worst_case_eur: float
     eur_per_usd: float
     month_to_date_eur: float | None
+    running_jobs_eur: float | None
     month_total_eur: float | None
     month_check: str
 
@@ -86,12 +92,36 @@ def month_to_date_eur(ce: Any, *, eur_per_usd: float, today: date) -> float:
     return usd * eur_per_usd
 
 
+def running_jobs_eur(
+    jobs: Iterable[dict[str, Any]],
+    *,
+    eur_per_usd: float,
+    prices_usd: dict[str, float] | None = None,
+) -> float:
+    """The most the running jobs can bill: on-demand price x each job's
+    `MaxRuntimeInSeconds`. A job on an instance with no known price is
+    refused rather than counted as free."""
+    prices = ON_DEMAND_USD if prices_usd is None else prices_usd
+    usd = 0.0
+    for job in jobs:
+        instance = job["ResourceConfig"]["InstanceType"]
+        if instance not in prices:
+            raise CostRefused(
+                f"running job {job.get('TrainingJobName')} is on {instance}, "
+                "which has no price here; its worst case cannot be counted"
+            )
+        hours = job["StoppingCondition"]["MaxRuntimeInSeconds"] / 3600
+        usd += prices[instance] * hours
+    return usd * eur_per_usd
+
+
 def check(
     *,
     expected_hours: float,
     max_runtime_hours: float,
     spot: bool,
     month_to_date_eur: float | None,
+    running_jobs_eur: float | None = None,
     month_required: bool = True,
     eur_per_usd: float = EUR_PER_USD,
     spot_price_usd: float = SPOT_USD_PER_HOUR,
@@ -99,7 +129,15 @@ def check(
     run_limit_eur: float = RUN_LIMIT_EUR,
     month_limit_eur: float = MONTH_LIMIT_EUR,
 ) -> Estimate:
-    """The estimate, or `CostRefused` saying which limit it passes."""
+    """The estimate, or `CostRefused` saying which limit it passes.
+
+    `running_jobs_eur` is the worst case of the jobs running now (see
+    `running_jobs_eur`); a launch that sends a job must give it."""
+    if not expected_hours > 0:
+        raise CostRefused(
+            f"expected hours must be more than 0, not {expected_hours}: the "
+            "estimate would be no cost at all"
+        )
     if expected_hours > max_runtime_hours:
         raise CostRefused(
             f"expected {expected_hours} h is more than the {max_runtime_hours} h "
@@ -124,14 +162,20 @@ def check(
             )
         check_text = "not checked (dry run, no --month-to-date-eur)"
     else:
-        total = month_to_date_eur + estimate_eur
+        if running_jobs_eur is None and month_required:
+            raise CostRefused("the jobs running now were not counted")
+        running = running_jobs_eur or 0.0
+        total = month_to_date_eur + running + estimate_eur
         if total > month_limit_eur:
             raise CostRefused(
                 f"this month's spend so far {month_to_date_eur:.2f} EUR plus "
+                f"the worst case of jobs running now {running:.2f} EUR plus "
                 f"this run's estimate {estimate_eur:.2f} EUR is {total:.2f} EUR, "
                 f"over the {month_limit_eur:.0f} EUR month limit"
             )
-        check_text = f"{total:.2f} of {month_limit_eur:.0f} EUR"
+        check_text = f"{total:.2f} of {month_limit_eur:.0f} EUR" + (
+            "" if running_jobs_eur is not None else " (running jobs not counted)"
+        )
     return Estimate(
         expected_hours,
         price,
@@ -141,6 +185,7 @@ def check(
         worst_eur,
         eur_per_usd,
         month_to_date_eur,
+        running_jobs_eur,
         total,
         check_text,
     )

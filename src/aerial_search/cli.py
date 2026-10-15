@@ -46,6 +46,13 @@ def _part(text: str) -> tuple[int, int]:
     return k, n
 
 
+def _positive_hours(text: str) -> float:
+    hours = float(text)
+    if not hours > 0:
+        raise argparse.ArgumentTypeError(f"{text!r}: must be more than 0 hours")
+    return hours
+
+
 def _add_run_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--scratch",
@@ -488,7 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cloud.add_argument(
         "--expected-hours",
-        type=float,
+        type=_positive_hours,
         help="for the estimate (default: from the measured laptop figures)",
     )
     cloud.add_argument(
@@ -829,8 +836,9 @@ def main(argv: list[str] | None = None) -> None:
                 spot=not args.on_demand,
                 max_runtime_hours=args.max_runtime_hours,
                 max_wait_hours=args.max_wait_hours,
-                expected_hours=args.expected_hours
-                or cost.default_expected_hours(args.input, args.camera),
+                expected_hours=cost.default_expected_hours(args.input, args.camera)
+                if args.expected_hours is None
+                else args.expected_hours,
                 eur_per_usd=args.eur_per_usd or cost.EUR_PER_USD,
                 month_to_date_eur=args.month_to_date_eur,
                 role_arn=args.role_arn,

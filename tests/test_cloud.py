@@ -96,8 +96,14 @@ def estimate(**over: Any) -> cost.Estimate:
         max_runtime_hours=12.0,
         spot=True,
         month_to_date_eur=0.0,
+        running_jobs_eur=0.0,
     )
     return cost.check(**{**args, **over})
+
+
+def test_a_launch_that_did_not_count_running_jobs_is_refused() -> None:
+    with pytest.raises(cost.CostRefused, match="running"):
+        estimate(running_jobs_eur=None)
 
 
 def test_the_estimate_is_price_times_expected_hours() -> None:
@@ -136,6 +142,74 @@ def test_a_dry_run_may_skip_the_month_check_but_says_so() -> None:
     e = estimate(month_to_date_eur=None, month_required=False)
     assert e.month_total_eur is None
     assert "not checked" in e.month_check
+
+
+def test_running_jobs_worst_case_counts_in_the_month_check() -> None:
+    # Cost Explorer lags a day, so a job running now may not be in it yet
+    e = estimate(
+        eur_per_usd=1.0,
+        expected_hours=2.5,
+        month_to_date_eur=40.0,
+        running_jobs_eur=18.0,
+    )
+    assert e.month_total_eur == pytest.approx(59.0)
+    assert e.running_jobs_eur == pytest.approx(18.0)
+    with pytest.raises(cost.CostRefused, match="running"):
+        estimate(
+            eur_per_usd=1.0,
+            expected_hours=2.5,
+            month_to_date_eur=40.0,
+            running_jobs_eur=19.5,
+        )
+
+
+@pytest.mark.parametrize("hours", [0.0, -1.0])
+def test_expected_hours_must_be_positive(hours: float) -> None:
+    with pytest.raises(cost.CostRefused, match="expected"):
+        estimate(expected_hours=hours)
+
+
+def running(instance: str = "ml.g4dn.xlarge", seconds: int = 7200) -> dict:
+    return {
+        "TrainingJobName": "j",
+        "ResourceConfig": {"InstanceType": instance},
+        "StoppingCondition": {"MaxRuntimeInSeconds": seconds},
+    }
+
+
+def test_a_running_jobs_worst_case_is_on_demand_times_its_max_runtime() -> None:
+    assert cost.running_jobs_eur(
+        [running(), running(seconds=3600)], eur_per_usd=1.0
+    ) == pytest.approx(0.822 * 3)
+    with pytest.raises(cost.CostRefused, match="ml.p3.2xlarge"):
+        cost.running_jobs_eur([running("ml.p3.2xlarge")], eur_per_usd=1.0)
+
+
+def test_running_jobs_are_listed_in_progress_and_described() -> None:
+    seen: dict[str, Any] = {}
+
+    class Pages:
+        def paginate(self, **kw: Any) -> Any:
+            seen.update(kw)
+            yield {"TrainingJobSummaries": [{"TrainingJobName": "a"}]}
+            yield {"TrainingJobSummaries": [{"TrainingJobName": "b"}]}
+
+    class Sm:
+        def get_paginator(self, name: str) -> Any:
+            assert name == "list_training_jobs"
+            return Pages()
+
+        def describe_training_job(self, TrainingJobName: str) -> Any:
+            return {**running(), "TrainingJobName": TrainingJobName}
+
+    class Session:
+        def client(self, name: str, **_: Any) -> Any:
+            assert name == "sagemaker"
+            return Sm()
+
+    jobs = launcher.running_jobs(Session())
+    assert [j["TrainingJobName"] for j in jobs] == ["a", "b"]
+    assert seen["StatusEquals"] == "InProgress"
 
 
 def test_expected_hours_beyond_the_max_runtime_is_refused() -> None:
@@ -340,6 +414,7 @@ def launch(repo: Path | None, tmp_path: Path, **over: Any) -> Any:
         dry_run=True,
         session_factory=no_aws,
         export_constraints=lambda root: PINS,
+        list_running=lambda session: [],
     )
     return launcher.launch(**{**args, **over})
 
@@ -438,6 +513,31 @@ def test_the_cost_guard_runs_before_anything_is_sent(
 ) -> None:
     with pytest.raises(cost.CostRefused):
         launch(repo, tmp_path, max_runtime_hours=24.0, max_wait_hours=30.0)
+
+
+def test_the_launch_counts_running_jobs_before_sending(
+    repo: Path, tmp_path: Path
+) -> None:
+    class Session:
+        def client(self, name: str, **_: Any) -> Any:
+            raise AssertionError(f"nothing may be sent ({name})")
+
+    sessions: list[Any] = []
+
+    def lister(session: Any) -> list[dict]:
+        sessions.append(session)
+        return [running(seconds=12 * 3600)]  # 9.86 EUR worst case
+
+    with pytest.raises(cost.CostRefused, match="running"):
+        launch(
+            repo,
+            tmp_path,
+            dry_run=False,
+            session_factory=Session,
+            month_to_date_eur=50.0,
+            list_running=lister,
+        )
+    assert len(sessions) == 1
 
 
 def test_submission_uploads_the_source_then_creates_the_job(
@@ -932,3 +1032,16 @@ def test_the_job_gets_the_same_flags_train_baseline_would_parse() -> None:
     assert local.device == "cuda"
     args = request(baseline_args=forwarded, logical_run="x" * 100)
     assert len(args["Environment"]["AERIAL_SEARCH_BASELINE_ARGS"]) <= 512
+
+
+@pytest.mark.parametrize("hours", ["0", "-1", "nan"])
+def test_the_command_line_refuses_expected_hours_that_are_not_positive(
+    hours: str,
+) -> None:
+    from aerial_search import cli
+
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(
+            ["sagemaker-train", "rgb", "--percent", "10", "--fold", "f"]
+            + ["--expected-hours", hours]
+        )

@@ -240,6 +240,20 @@ def check_manifests(manifests: Path, scratch: bool) -> None:
         )
 
 
+def running_jobs(session: Any) -> list[dict[str, Any]]:
+    """Every SageMaker training job in progress in the region, described
+    (account-wide, like the month-to-date spend)."""
+    sm = session.client("sagemaker", region_name=REGION)
+    names = [
+        summary["TrainingJobName"]
+        for page in sm.get_paginator("list_training_jobs").paginate(
+            StatusEquals="InProgress"
+        )
+        for summary in page["TrainingJobSummaries"]
+    ]
+    return [sm.describe_training_job(TrainingJobName=name) for name in names]
+
+
 def _exists(s3: Any, key: str) -> bool:
     from botocore.exceptions import ClientError
 
@@ -294,6 +308,7 @@ def launch(
     spot_price_usd: float = cost.SPOT_USD_PER_HOUR,
     today: date | None = None,
     export_constraints: Callable[[Path], bytes] = source.export_constraints,
+    list_running: Callable[[Any], list[dict[str, Any]]] | None = None,
 ) -> Plan:
     """Check everything, build the job, and send it unless `dry_run`."""
     state = run_module.code_state(scratch=scratch, repo=repo)
@@ -311,11 +326,17 @@ def launch(
             eur_per_usd=eur_per_usd,
             today=today or datetime.now(UTC).date(),
         )
+    running_eur = None
+    if session is not None:
+        running_eur = cost.running_jobs_eur(
+            (list_running or running_jobs)(session), eur_per_usd=eur_per_usd
+        )
     estimate = cost.check(
         expected_hours=expected_hours,
         max_runtime_hours=max_runtime_hours,
         spot=spot,
         month_to_date_eur=month_to_date_eur,
+        running_jobs_eur=running_eur,
         month_required=not dry_run,
         eur_per_usd=eur_per_usd,
         spot_price_usd=spot_price_usd,
