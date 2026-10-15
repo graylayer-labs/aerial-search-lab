@@ -2,60 +2,86 @@
 
 [![ci](https://github.com/graylayer-labs/ssl-aerial-person-detection/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graylayer-labs/ssl-aerial-person-detection/actions/workflows/ci.yml)
 
-Detecting people in drone footage from RGB and thermal cameras, when footage is
-plentiful and labels are scarce.
+This project finds people in drone footage from RGB (ordinary) and thermal
+(infrared) cameras. It asks how far a detector gets when footage is plentiful
+and labels, the boxes drawn by hand, are scarce.
 
-## The problem
+## Why
 
-Search and rescue teams fly drones that carry an RGB camera and a thermal
-camera. They record far more footage than anyone can label by hand, so a
-detector that needs a large labelled dataset is of little use to them.
-
-The two cameras also fail in different conditions. Thermal picks up warm rocks,
-engines, and animals as well as people. RGB loses people in darkness and under
-foliage. Footage from both cameras of the same scene carries information that
-neither has alone.
-
-This project asks how far unlabelled, paired footage can take a detector, and
-how few labels it then needs.
-
-## Approach
-
-1. Start from a pretrained vision foundation model.
-2. Adapt it to aerial RGB and thermal imagery with self-supervised learning on
-   unlabelled footage.
-3. Train a person detector on top with a small fraction of the labels.
-4. Measure everything against a baseline on flights the model has never seen.
+Search and rescue teams record far more footage than anyone can label, so a
+detector that needs a large labelled dataset is of little use to them. The two
+cameras also fail differently: thermal picks up warm rocks and animals, RGB
+loses people in darkness and under foliage. The plan is to start from a
+pretrained vision model, adapt it with self-supervised learning (learning from
+unlabelled footage), train a person detector on a small share of the labels,
+and measure everything on flights the model has never seen.
+[INTENT.md](INTENT.md) has the purpose and the standard.
 
 ![Pipeline diagram. RGB and thermal drone footage, mostly unlabelled, is paired frame by frame. A pretrained vision foundation model is adapted to the paired footage with self-supervised learning. A person detector is trained on top using a small labelled fraction, then evaluated on flights the model has never seen.](docs/figures/pipeline.svg)
 
-[INTENT.md](INTENT.md) explains the purpose and the standard the work is held
-to.
+## Where it's at (2026-10-15)
 
-## Status
+- **Done:** the data is paired, split by site and day, and scored; the
+  baseline to beat is an ordinary fine-tuned detector, which leads a frozen
+  foundation model at 1% to 10% of labels ([Milestone 2](docs/milestones/off-the-shelf-bar.md)).
+- **Done:** training runs can be sent to a cloud GPU as cheap interruptible
+  jobs, capped at EUR 15 a run and EUR 60 a month. No job has run yet.
+- **Done:** the detector can read frames at full resolution by cutting them into
+  tiles, and a stopped run resumes. No tiled score yet.
+- **Doing:** waiting on AWS to grant spot GPU quota ([#127](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/127)).
+- **Next:** cloud runs of the tiled detector ([#96](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/96)), then adapting the model with unlabelled footage.
 
-**Milestone 2, Off-the-shelf bar, is done.** A frozen foundation model was
-measured with 1% to 100% of the labels, and an ordinary fine-tuned detector
-beat it where labels are scarce. The
-[write-up](docs/milestones/off-the-shelf-bar.md) has the detail.
+The dated log is [docs/progress.md](docs/progress.md).
+
+## Results so far
+
+The best result so far is the fine-tuned detector. Scores are mean AP over four
+held-out site-days, shown as `ap_iou25` / `ap_iou50` (a box counts as right at
+a quarter or half overlap with the true box), one seed per run. Per-fold
+tables and spread are in the linked results.
+
+| Claim | Number | Source |
+|---|---|---|
+| A fine-tuned detector beats a frozen foundation-model head with few labels (RGB, 10% of labels) | 0.163 / 0.046 against 0.113 / 0.006 | [Milestone 2](docs/milestones/off-the-shelf-bar.md), [results](docs/supervised-baseline-results.md) |
+| Same, thermal, 10% of labels | 0.256 / 0.137 against 0.129 / 0.007 | [Milestone 2](docs/milestones/off-the-shelf-bar.md), [results](docs/supervised-baseline-results.md) |
+| With all labels neither is clearly ahead on `ap_iou25`, but the detector's boxes are tighter (RGB; thermal) | 0.204 / 0.060 against 0.250 / 0.056; 0.294 / 0.176 against 0.302 / 0.083 | [Milestone 2](docs/milestones/off-the-shelf-bar.md) |
+| Resolution is the largest lever found (RGB, MtErie fold, 100%, one run) | 0.779 / 0.448 at full frame against 0.213 / 0.065 shrunk | [results](docs/supervised-baseline-results.md) |
+| Thermal needs no special input handling: equalising contrast hurts | -0.050 (10%) and -0.137 (100%) in mean `ap_iou25` | [ablation](docs/thermal-input-ablation.md) |
+| The pairing is verified | 14,834 RGB and thermal pairs from 17 clip pairs | [Milestone 1](docs/milestones/trusted-ground.md), [review](docs/wisard-pairing-review.md) |
 
 ![Mean test AP over four held-out site-days, frozen SigLIP 2 plus a head against a fine-tuned detector, RGB and thermal](docs/figures/off-the-shelf-bar.svg)
 
-- At the same input size, a COCO-pretrained Faster R-CNN fine-tuned on the
-  same frames beats a head on frozen SigLIP 2 features at 1%, 5% and 10% of
-  labels on both cameras, and is level at 100%. It is now the bar.
-- Thermal needs no special input handling: copying the grey channel is as
-  good as a learned input stem, and equalising contrast hurts.
-- Resolution is the largest lever found: one full-resolution run scored
-  `ap_iou25` 0.779 against 0.213 at the shared input size.
-- Data: the public [WiSARD dataset](https://sites.google.com/uw.edu/wisard/),
-  14,834 paired RGB and thermal frames from 17 verified clips, split into four
-  folds that each leave one site-day out. Milestone 1,
-  [Trusted ground](docs/milestones/trusted-ground.md), made that split and
-  the scoring trustworthy.
+## How to read this repo
 
-Progress is tracked as
-[epics and issues](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues?q=is%3Aissue+label%3Aepic).
+Start with `docs/progress.md`, then the two milestones.
+
+**Story**
+- `docs/progress.md`: what is now true, newest first.
+- `docs/milestones/`: one write-up per finished epic (a group of related tasks).
+- `docs/guide/`: a step-by-step account of how it was built, mistakes included.
+- `docs/blog/`: short result-led posts.
+- `CHANGELOG.md`: key changes in two minutes.
+- `docs/decisions.md`: every technical choice, one line each.
+
+**Results**
+- `docs/detection-head-results.md`: the frozen-feature head, per fold.
+- `docs/supervised-baseline-results.md`: the fine-tuned detector, per fold.
+- `docs/thermal-input-ablation.md`: three ways to feed thermal frames in.
+- `docs/figures/`: the pipeline diagram and the Milestone 2 chart.
+
+**Design**
+- `docs/detection-head-design.md`: how the head is built.
+- `docs/forward-pass-cost.md`: what one model pass costs on the laptop.
+
+**Reviews** (the evidence behind a decision)
+- `docs/wisard-pairing-review.md`: how RGB and thermal frames are paired.
+- `docs/site-folds-review.md`: how the data is split.
+- `docs/evaluation-metric-review.md`: why the metric is `ap_iou25`.
+- `docs/label-completeness-review.md`: how many people have no box.
+- `docs/model-and-dataset-review.md`: why SigLIP 2.
+- `docs/third-party-skills-review.md`: outside agent skills considered.
+
+**Rules:** [INTENT.md](INTENT.md) is why; [CLAUDE.md](CLAUDE.md) is how.
 
 ## Setup
 
@@ -70,9 +96,8 @@ uv run ruff check .
 ## How this project is run
 
 Claude agents do the engineering and the owner directs. Work is planned as
-issues, each written so that an agent with no prior context can pick it up.
-[CLAUDE.md](CLAUDE.md) holds the working rules and
-[docs/decisions.md](docs/decisions.md) records the choices made along the way.
+[epics and issues](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues?q=is%3Aissue+label%3Aepic),
+each written so that an agent with no prior context can pick it up.
 
 ## Licence
 
