@@ -298,7 +298,9 @@ def launch(
         eur_per_usd=eur_per_usd,
         spot_price_usd=spot_price_usd,
     )
-    code_root = repo or run_module._code_location()
+    # The whole repository: the entry point and pyproject.toml sit outside
+    # the package, which is where the running code (the CLI default) lives.
+    code_root = run_module._repo_root((repo or run_module._code_location()).resolve())
     archive, digest = source.archive_commit(code_root, commit)
     manifests_digest = source.digest_dir(manifests)
     if role_arn is None and session is not None:

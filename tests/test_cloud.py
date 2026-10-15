@@ -307,7 +307,7 @@ def write_manifests(path: Path, *, verified: bool = True, scratch: bool = False)
     (path / "other.jsonl").write_text("{}\n")
 
 
-def launch(repo: Path, tmp_path: Path, **over: Any) -> Any:
+def launch(repo: Path | None, tmp_path: Path, **over: Any) -> Any:
     manifests = tmp_path / "manifests"
     if not manifests.exists():
         write_manifests(manifests)
@@ -344,6 +344,26 @@ def test_a_dry_run_builds_the_whole_request_and_sends_nothing(
     assert plan.estimate.estimate_usd == pytest.approx(1.2)
     attestation = json.loads(plan.request["Environment"]["AERIAL_SEARCH_ATTESTATION"])
     assert attestation["commit"] == run_git(repo, "rev-parse", "HEAD")
+
+
+def test_the_cli_default_archives_the_whole_repository(
+    repo: Path, tmp_path: Path, monkeypatch
+) -> None:
+    (repo / "tools").mkdir()
+    (repo / "tools" / "sagemaker_entry.py").write_text("")
+    (repo / "pyproject.toml").write_text("[project]\n")
+    run_git(repo, "add", ".")
+    run_git(repo, "commit", "-m", "entry")
+    run_git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    monkeypatch.setattr(
+        run_module, "_code_location", lambda: repo / "src" / "aerial_search"
+    )
+    plan = launch(None, tmp_path)
+    with tarfile.open(fileobj=io.BytesIO(plan.archive), mode="r:gz") as tar:
+        names = tar.getnames()
+    assert "tools/sagemaker_entry.py" in names
+    assert "pyproject.toml" in names
+    assert "src/aerial_search/a.py" in names
 
 
 def test_a_dirty_tree_is_refused(repo: Path, tmp_path: Path) -> None:
