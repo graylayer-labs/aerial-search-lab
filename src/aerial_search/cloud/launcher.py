@@ -240,17 +240,21 @@ def check_manifests(manifests: Path, scratch: bool) -> None:
         )
 
 
-def running_jobs(session: Any) -> list[dict[str, Any]]:
-    """Every SageMaker training job in progress in the region, described
-    (account-wide, like the month-to-date spend)."""
+def running_jobs(session: Any, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Every SageMaker training job in the region that is in progress, stopping
+    or changed in the last `cost.LAG_HOURS`, described (account-wide, like the
+    month-to-date spend). Each job is described once."""
     sm = session.client("sagemaker", region_name=REGION)
-    names = [
-        summary["TrainingJobName"]
-        for page in sm.get_paginator("list_training_jobs").paginate(
-            StatusEquals="InProgress"
-        )
-        for summary in page["TrainingJobSummaries"]
-    ]
+    since = (now or datetime.now(UTC)) - timedelta(hours=cost.LAG_HOURS)
+    names: dict[str, None] = {}
+    for filters in (
+        {"StatusEquals": "InProgress"},
+        {"StatusEquals": "Stopping"},
+        {"LastModifiedTimeAfter": since},
+    ):
+        for page in sm.get_paginator("list_training_jobs").paginate(**filters):
+            for summary in page["TrainingJobSummaries"]:
+                names[summary["TrainingJobName"]] = None
     return [sm.describe_training_job(TrainingJobName=name) for name in names]
 
 
@@ -396,10 +400,6 @@ def check_attestation(record: dict[str, Any], repo_root: Path) -> None:
     if not isinstance(attestation, dict) or not attestation.get("commit"):
         raise run_module.ProvenanceError("run.json has no attestation of its code")
     commit = str(attestation["commit"])
-    try:
-        digest = source.archive_commit(repo_root, commit)[1]
-    except RuntimeError as error:
-        raise run_module.ProvenanceError(
     resolved = run_module._git(
         repo_root, "rev-parse", "--verify", f"{commit}^{{commit}}"
     )
@@ -413,6 +413,10 @@ def check_attestation(record: dict[str, Any], repo_root: Path) -> None:
             f"run.json says commit {record.get('commit')} but the attestation "
             f"says {commit}"
         )
+    try:
+        digest = source.archive_commit(repo_root, commit)[1]
+    except RuntimeError as error:
+        raise run_module.ProvenanceError(
             f"cannot archive the attested commit {commit} here ({error}); "
             "`git fetch` it first"
         ) from None

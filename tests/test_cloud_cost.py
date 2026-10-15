@@ -1,5 +1,6 @@
 """The pre-launch cost guard (#113)."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -45,11 +46,11 @@ def test_a_worst_case_over_the_run_limit_is_refused() -> None:
         estimate(eur_per_usd=1.0, max_runtime_hours=18.3, expected_hours=1.0)
 
 
-def test_month_to_date_plus_estimate_over_the_month_limit_is_refused() -> None:
-    e = estimate(eur_per_usd=1.0, expected_hours=2.5, month_to_date_eur=58.0)
-    assert e.month_total_eur == pytest.approx(59.0)
+def test_month_to_date_plus_worst_case_over_the_month_limit_is_refused() -> None:
+    e = estimate(eur_per_usd=1.0, month_to_date_eur=50.0)
+    assert e.month_total_eur == pytest.approx(59.864)
     with pytest.raises(cost.CostRefused, match="month"):
-        estimate(eur_per_usd=1.0, expected_hours=2.5, month_to_date_eur=59.5)
+        estimate(eur_per_usd=1.0, month_to_date_eur=50.2)
 
 
 def test_an_unknown_month_to_date_is_refused() -> None:
@@ -67,18 +68,16 @@ def test_running_jobs_worst_case_counts_in_the_month_check() -> None:
     # Cost Explorer lags a day, so a job running now may not be in it yet
     e = estimate(
         eur_per_usd=1.0,
-        expected_hours=2.5,
-        month_to_date_eur=40.0,
+        month_to_date_eur=30.0,
         running_jobs_eur=18.0,
     )
-    assert e.month_total_eur == pytest.approx(59.0)
+    assert e.month_total_eur == pytest.approx(57.864)
     assert e.running_jobs_eur == pytest.approx(18.0)
     with pytest.raises(cost.CostRefused, match="running"):
         estimate(
             eur_per_usd=1.0,
-            expected_hours=2.5,
-            month_to_date_eur=40.0,
-            running_jobs_eur=19.5,
+            month_to_date_eur=30.0,
+            running_jobs_eur=21.0,
         )
 
 
@@ -130,3 +129,39 @@ def test_cost_explorer_amounts_are_summed_and_converted() -> None:
         Ce(), eur_per_usd=0.9, today=cost.date(2026, 10, 14)
     ) == pytest.approx(9.0)
     assert seen["TimePeriod"] == {"Start": "2026-10-01", "End": "2026-10-15"}
+
+
+NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
+
+
+def ended(hours_ago: float, billable: int = 3600, status: str = "Completed") -> dict:
+    return {
+        **running(),
+        "TrainingJobStatus": status,
+        "TrainingEndTime": NOW - timedelta(hours=hours_ago),
+        "BillableTimeInSeconds": billable,
+    }
+
+
+def test_jobs_that_ended_in_the_last_48_hours_count_at_their_billable_time() -> None:
+    # Cost Explorer lags, so a job that just ended may not be in month-to-date.
+    # Counting it when it is would count it twice, which errs safe.
+    jobs = [ended(1, 7200), ended(47, 3600), ended(49, 36000)]
+    assert cost.running_jobs_eur(jobs, eur_per_usd=1.0, now=NOW) == pytest.approx(
+        0.822 * 3
+    )
+
+
+def test_a_stopping_job_counts_at_its_max_runtime() -> None:
+    stopping = {**running(seconds=3600), "TrainingJobStatus": "Stopping"}
+    assert cost.running_jobs_eur([stopping], eur_per_usd=1.0, now=NOW) == pytest.approx(
+        0.822
+    )
+
+
+def test_the_month_check_counts_this_runs_worst_case_not_its_estimate() -> None:
+    # estimate 3 h spot = 1.2 EUR; worst case 12 h on demand = 9.864 EUR
+    with pytest.raises(cost.CostRefused, match="worst case"):
+        estimate(eur_per_usd=1.0, month_to_date_eur=51.0)
+    e = estimate(eur_per_usd=1.0, month_to_date_eur=40.0)
+    assert e.month_total_eur == pytest.approx(40.0 + 0.822 * 12)

@@ -8,9 +8,10 @@ instance's dollar price at a configurable rate.
 - worst case = on-demand price x `MaxRuntimeInSeconds`, which is what the job
   can bill at most (spot is never dearer than on-demand)
 - refuse if the worst case passes the per-run limit, or if month-to-date spend
-  plus the worst case of the SageMaker jobs running now plus the estimate
-  passes the month limit (Cost Explorer lags by up to a day, so a running
-  job may not be in month-to-date yet; counting it whole errs towards
+  plus the worst case of the SageMaker jobs running or stopping now, plus
+  what jobs that ended in the last 48 h billed, plus this run's worst case
+  passes the month limit (Cost Explorer lags by up to a day, so such jobs
+  may not be in month-to-date yet; counting them whole errs towards
   refusing)
 """
 
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 ON_DEMAND_USD_PER_HOUR = 0.822  # ml.g4dn.xlarge, eu-west-1, 2026-10-14
@@ -27,6 +28,8 @@ SPOT_USD_PER_HOUR = 0.40  # top of the 0.33-0.40 estimate; AWS publishes none
 EUR_PER_USD = 0.95  # deliberately high so the guard errs towards refusing
 RUN_LIMIT_EUR = 15.0
 MONTH_LIMIT_EUR = 60.0
+LIVE_STATUSES = ("InProgress", "Stopping")  # a job with no status counts as live
+LAG_HOURS = 48  # how long a finished job may be missing from Cost Explorer
 
 # Hours per cell. From the laptop CPU figures in
 # docs/supervised-baseline-results.md (tiled RGB: training 20 min, validation
@@ -97,20 +100,34 @@ def running_jobs_eur(
     *,
     eur_per_usd: float,
     prices_usd: dict[str, float] | None = None,
+    now: datetime | None = None,
 ) -> float:
-    """The most the running jobs can bill: on-demand price x each job's
-    `MaxRuntimeInSeconds`. A job on an instance with no known price is
-    refused rather than counted as free."""
+    """The most the live and just-finished jobs can bill, on-demand price x:
+    `MaxRuntimeInSeconds` for a job running or stopping, `BillableTimeInSeconds`
+    for one whose `TrainingEndTime` is within `LAG_HOURS` (Cost Explorer lags,
+    so month-to-date may lack it; if it has it the job is counted twice, which
+    errs safe). A job on an instance with no known price is refused rather
+    than counted as free."""
     prices = ON_DEMAND_USD if prices_usd is None else prices_usd
+    now = now or datetime.now(UTC)
     usd = 0.0
     for job in jobs:
+        live = job.get("TrainingJobStatus", "InProgress") in LIVE_STATUSES
+        end = job.get("TrainingEndTime")
+        if not live and not (end and now - end <= timedelta(hours=LAG_HOURS)):
+            continue
         instance = job["ResourceConfig"]["InstanceType"]
         if instance not in prices:
             raise CostRefused(
                 f"running job {job.get('TrainingJobName')} is on {instance}, "
                 "which has no price here; its worst case cannot be counted"
             )
-        hours = job["StoppingCondition"]["MaxRuntimeInSeconds"] / 3600
+        seconds = (
+            job["StoppingCondition"]["MaxRuntimeInSeconds"]
+            if live
+            else job.get("BillableTimeInSeconds", 0)
+        )
+        hours = seconds / 3600
         usd += prices[instance] * hours
     return usd * eur_per_usd
 
@@ -165,12 +182,13 @@ def check(
         if running_jobs_eur is None and month_required:
             raise CostRefused("the jobs running now were not counted")
         running = running_jobs_eur or 0.0
-        total = month_to_date_eur + running + estimate_eur
+        total = month_to_date_eur + running + worst_eur
         if total > month_limit_eur:
             raise CostRefused(
                 f"this month's spend so far {month_to_date_eur:.2f} EUR plus "
-                f"the worst case of jobs running now {running:.2f} EUR plus "
-                f"this run's estimate {estimate_eur:.2f} EUR is {total:.2f} EUR, "
+                f"the worst case of jobs running now or ended in the last "
+                f"{LAG_HOURS} h {running:.2f} EUR plus this run's worst case "
+                f"{worst_eur:.2f} EUR is {total:.2f} EUR, "
                 f"over the {month_limit_eur:.0f} EUR month limit"
             )
         check_text = f"{total:.2f} of {month_limit_eur:.0f} EUR" + (

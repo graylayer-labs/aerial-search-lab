@@ -516,8 +516,10 @@ to its issue or PR. No version numbers.
   `prepare`, and the cost guard: estimate is price x `--expected-hours`
   (default from the laptop figures), worst case is the on-demand price x
   `--max-runtime-hours` (default 12); it refuses a worst case over EUR 15, or
-  month-to-date plus the estimate plus the worst case of every SageMaker job
-  still running over EUR 60. Month-to-date is read from Cost
+  month-to-date plus this run's worst case plus the worst case of every
+  SageMaker job running or stopping, plus the billable time of jobs that
+  ended in the last 48 h (Cost Explorer lags; such a job may be counted
+  twice, which errs safe), over EUR 60. Month-to-date is read from Cost
   Explorer (account-wide SageMaker spend, up to a day late) or given with
   `--month-to-date-eur`; if unreadable it refuses. Dollars become euros at
   `--eur-per-usd` (default 0.95, high on purpose). The guard estimates; the
@@ -526,7 +528,7 @@ to its issue or PR. No version numbers.
   code, manifests and locked dependency list (`uv export`, installed with
   `pip -c`, container torch kept) it received, refuses on a difference, and
   `run.json`
-  records the commit, instance type, spot or on-demand and job name under
+  records the commit, instance type, spot and job name under
   `attestation`, with the data verified in the job as on the laptop. Each
   attempt gets a new run name (`<run>-a<n>-<UTC time>`); the checkpoints live at
   `s3://<bucket>/sagemaker/checkpoints/<run>/`, fixed per run, so a job

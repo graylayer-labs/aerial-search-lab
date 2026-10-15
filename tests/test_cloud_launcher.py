@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 import tarfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -370,11 +371,11 @@ def running(instance: str = "ml.g4dn.xlarge", seconds: int = 7200) -> dict:
 
 
 def test_running_jobs_are_listed_in_progress_and_described() -> None:
-    seen: dict[str, Any] = {}
+    seen: list[dict[str, Any]] = []
 
     class Pages:
         def paginate(self, **kw: Any) -> Any:
-            seen.update(kw)
+            seen.append(kw)
             yield {"TrainingJobSummaries": [{"TrainingJobName": "a"}]}
             yield {"TrainingJobSummaries": [{"TrainingJobName": "b"}]}
 
@@ -391,6 +392,9 @@ def test_running_jobs_are_listed_in_progress_and_described() -> None:
             assert name == "sagemaker"
             return Sm()
 
-    jobs = launcher.running_jobs(Session())
+    now = datetime(2026, 10, 15, 12, tzinfo=UTC)
+    jobs = launcher.running_jobs(Session(), now=now)
+    # every listing returns a and b; each job is described once
     assert [j["TrainingJobName"] for j in jobs] == ["a", "b"]
-    assert seen["StatusEquals"] == "InProgress"
+    assert [k.get("StatusEquals") for k in seen] == ["InProgress", "Stopping", None]
+    assert seen[2]["LastModifiedTimeAfter"] == now - timedelta(hours=48)
