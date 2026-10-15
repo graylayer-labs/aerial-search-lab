@@ -43,6 +43,7 @@ from aerial_search.experiments.head_experiment import record_boxes, select_recor
 from aerial_search.experiments.predictions import (
     PREDICTIONS_FILENAME,
     PredictionLog,
+    read_model_id,
     score_file,
 )
 
@@ -428,16 +429,32 @@ def _set_rng_state(state: dict[str, Any]) -> None:
     torch.set_rng_state(state["torch"])
 
 
+def weights_id(weights: dict[str, torch.Tensor]) -> str:
+    """SHA-256 over the weights' names, dtypes, shapes and bytes: the id of a
+    trained model, written in the header of the predictions it makes."""
+    digest = hashlib.sha256()
+    for name in sorted(weights):
+        tensor = weights[name].detach().cpu().contiguous()
+        digest.update(f"{name}\0{tensor.dtype}\0{tuple(tensor.shape)}\0".encode())
+        digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
+
+
 class Checkpoints:
     """One run's checkpoint in `directory`: `CHECKPOINT_FILENAME`, replaced
     atomically every `every` steps and once training ends, beside the test
-    predictions file. `load` refuses a checkpoint of another identity."""
+    predictions file. `load` refuses a checkpoint of another identity.
+
+    The trained checkpoint carries `model_id` (`weights_id` of its weights).
+    The predictions file's header names the model that made it; `load` sets
+    aside a file whose model is not the trained checkpoint's."""
 
     def __init__(self, directory: Path, identity: dict[str, Any], every: int):
         if every < 1:
             raise ValueError(f"checkpoint_every must be at least 1, not {every}")
         self.directory, self.identity, self.every = directory, identity, every
         self.state: dict[str, Any] | None = None
+        self.model_id: str | None = None  # set once a trained state exists
         self._lock: int | None = None
 
     def lock(self) -> None:
@@ -487,8 +504,19 @@ class Checkpoints:
                 "only with the config, seed, commit and manifests it started "
                 "with. Use another checkpoint directory."
             )
-        if self.predictions.exists() and state.get("phase") != "trained":
-            self._set_predictions_aside("the checkpoint is mid-training")
+        if state.get("phase") != "trained":
+            if self.predictions.exists():
+                self._set_predictions_aside("the checkpoint is mid-training")
+        else:
+            # A checkpoint saved before model ids: the id of its weights.
+            self.model_id = state.get("model_id") or weights_id(state["model"])
+            if self.predictions.exists():
+                found = read_model_id(self.predictions)
+                if found != self.model_id:
+                    self._set_predictions_aside(
+                        f"it was made by another model ({found}), not the "
+                        f"trained checkpoint's ({self.model_id})"
+                    )
         self.state = state
         return state
 
@@ -503,7 +531,7 @@ class Checkpoints:
         and a warning says so.
         """
         stale = self.predictions.with_name(
-            f"{self.predictions.stem}.stale-{int(time.time())}.jsonl"
+            f"{self.predictions.stem}.stale-{time.time_ns()}.jsonl"
         )
         os.replace(self.predictions, stale)
         warnings.warn(
@@ -541,6 +569,9 @@ class Checkpoints:
         os.replace(partial, self.path)
 
     def save(self, **state: Any) -> None:
+        if state.get("phase") == "trained":
+            self.model_id = weights_id(state.get("model") or {})
+            state["model_id"] = self.model_id
         state = {**state, "identity": self.identity, "rng": _rng_state()}
         self.directory.mkdir(parents=True, exist_ok=True)
         partial = self.path.with_suffix(".partial")
@@ -988,6 +1019,10 @@ def run_baseline(
                 seed=seed,
                 checkpoints=checkpoints,
             )
+            if checkpoints.model_id is None:  # no trained checkpoint was saved
+                checkpoints.model_id = weights_id(model.state_dict())
+            log.bind(checkpoints.model_id)
+            run_module.update_run(directory, model_id=checkpoints.model_id)
             predict_to_file(
                 model,
                 test,
