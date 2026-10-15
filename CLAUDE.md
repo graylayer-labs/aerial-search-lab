@@ -516,20 +516,25 @@ to its issue or PR. No version numbers.
   `prepare`, and the cost guard: estimate is price x `--expected-hours`
   (default from the laptop figures), worst case is the on-demand price x
   `--max-runtime-hours` (default 12); it refuses a worst case over EUR 15, or
-  month-to-date plus the estimate over EUR 60. Month-to-date is read from Cost
+  month-to-date plus the estimate plus the worst case of every SageMaker job
+  still running over EUR 60. Month-to-date is read from Cost
   Explorer (account-wide SageMaker spend, up to a day late) or given with
   `--month-to-date-eur`; if unreadable it refuses. Dollars become euros at
   `--eur-per-usd` (default 0.95, high on purpose). The guard estimates; the
   account's budget and the role's conditions enforce. The job's source is
   `git archive` of the commit, with its digest sent along; the job hashes the
-  code and manifests it received, refuses on a difference, and `run.json`
+  code, manifests and locked dependency list (`uv export`, installed with
+  `pip -c`, container torch kept) it received, refuses on a difference, and
+  `run.json`
   records the commit, instance type, spot or on-demand and job name under
   `attestation`, with the data verified in the job as on the laptop. Each
-  attempt gets a new run name (`<run>-a<n>`); the checkpoints live at
+  attempt gets a new run name (`<run>-a<n>-<UTC time>`); the checkpoints live at
   `s3://<bucket>/sagemaker/checkpoints/<run>/`, fixed per run, so a job
   resubmitted with `--attempt 2` resumes. Billable seconds are only known
   afterwards: `sagemaker-fetch` writes them to `cloud-job.json` beside
-  `run.json`. Design and limits: `src/aerial_search/cloud/entry.py`.
+  `run.json`, after re-archiving the attested commit and checking its digest
+  and that it is on `origin/main`. Design and limits:
+  `src/aerial_search/cloud/entry.py`.
 - Any number quoted in a doc or README must be reproducible from a committed
   config. If a number cannot be traced, remove it.
 - Report negative results. State what was expected, what happened, and the
