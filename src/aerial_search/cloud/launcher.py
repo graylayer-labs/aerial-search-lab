@@ -400,6 +400,19 @@ def check_attestation(record: dict[str, Any], repo_root: Path) -> None:
         digest = source.archive_commit(repo_root, commit)[1]
     except RuntimeError as error:
         raise run_module.ProvenanceError(
+    resolved = run_module._git(
+        repo_root, "rev-parse", "--verify", f"{commit}^{{commit}}"
+    )
+    if resolved.returncode != 0 or resolved.stdout.strip() != commit:
+        raise run_module.ProvenanceError(
+            f"the attested commit {commit!r} is not a full commit SHA this "
+            "repository has; a branch name or abbreviation could move"
+        )
+    if record.get("commit") != commit:
+        raise run_module.ProvenanceError(
+            f"run.json says commit {record.get('commit')} but the attestation "
+            f"says {commit}"
+        )
             f"cannot archive the attested commit {commit} here ({error}); "
             "`git fetch` it first"
         ) from None

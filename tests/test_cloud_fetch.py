@@ -99,6 +99,32 @@ def test_fetch_refuses_an_attested_digest_that_is_not_the_commits(
     assert not list(out.iterdir())
 
 
+def test_fetch_refuses_an_attested_commit_that_is_not_a_full_sha(
+    repo: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "outputs"
+    out.mkdir()
+    full = run_git(repo, "rev-parse", "HEAD")
+    for commit in (full[:12], "HEAD", "main"):
+        record = attested_record(repo)
+        record["attestation"]["commit"] = commit
+        with pytest.raises(run_module.ProvenanceError, match="full"):
+            launcher.fetch("ssl-aerial-exp-1", job_session(record), out, repo=repo)
+    assert not list(out.iterdir())
+
+
+def test_fetch_refuses_a_run_json_commit_that_is_not_the_attested_one(
+    repo: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "outputs"
+    out.mkdir()
+    record = attested_record(repo)
+    record["commit"] = "a" * 40
+    with pytest.raises(run_module.ProvenanceError, match="run.json"):
+        launcher.fetch("ssl-aerial-exp-1", job_session(record), out, repo=repo)
+    assert not list(out.iterdir())
+
+
 def test_fetch_refuses_a_normal_run_whose_commit_is_not_on_origin_main(
     repo: Path, tmp_path: Path
 ) -> None:
