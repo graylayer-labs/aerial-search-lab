@@ -1392,6 +1392,7 @@ name = "ssl-aerial-person-detection"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "gdown" },
     { name = "pillow" },
     { name = "pycocotools" },
@@ -1410,6 +1411,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.43.72" },
     { name = "gdown", specifier = ">=6.1.0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pycocotools", specifier = ">=2.0.11" },
