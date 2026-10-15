@@ -122,13 +122,12 @@ def running_jobs_eur(
                 f"running job {job.get('TrainingJobName')} is on {instance}, "
                 "which has no price here; its worst case cannot be counted"
             )
-        seconds = (
-            job["StoppingCondition"]["MaxRuntimeInSeconds"]
-            if live
-            else job.get("BillableTimeInSeconds", 0)
-        )
+        # Billable time arrives after the end; until then count the worst case.
+        max_seconds = job["StoppingCondition"]["MaxRuntimeInSeconds"]
+        seconds = max_seconds if live else job.get("BillableTimeInSeconds", max_seconds)
         hours = seconds / 3600
-        usd += prices[instance] * hours
+        count = job["ResourceConfig"].get("InstanceCount", 1)
+        usd += prices[instance] * hours * count
     return usd * eur_per_usd
 
 

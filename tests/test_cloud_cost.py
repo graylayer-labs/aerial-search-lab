@@ -159,6 +159,25 @@ def test_a_stopping_job_counts_at_its_max_runtime() -> None:
     )
 
 
+def test_a_job_on_two_instances_counts_both() -> None:
+    # The listing is account-wide, so a job started elsewhere may use several.
+    job = running(seconds=3600)
+    job["ResourceConfig"]["InstanceCount"] = 2
+    assert cost.running_jobs_eur([job], eur_per_usd=1.0, now=NOW) == pytest.approx(
+        0.822 * 2
+    )
+
+
+def test_a_just_ended_job_without_billable_time_counts_at_its_max_runtime() -> None:
+    # SageMaker fills BillableTimeInSeconds in after the end; until then the
+    # job must not count as free.
+    job = ended(1)
+    del job["BillableTimeInSeconds"]
+    assert cost.running_jobs_eur([job], eur_per_usd=1.0, now=NOW) == pytest.approx(
+        0.822 * 2
+    )
+
+
 def test_the_month_check_counts_this_runs_worst_case_not_its_estimate() -> None:
     # estimate 3 h spot = 1.2 EUR; worst case 12 h on demand = 9.864 EUR
     with pytest.raises(cost.CostRefused, match="worst case"):
