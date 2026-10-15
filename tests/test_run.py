@@ -116,6 +116,38 @@ def test_clean_head_equal_to_origin_main_is_allowed(repo: Path) -> None:
     assert all(data["packages"].values())
 
 
+def test_a_cpu_run_records_no_gpu_cuda_or_cudnn(repo: Path) -> None:
+    machine = json.loads((run(repo) / "run.json").read_text())["machine"]
+    assert machine["device"] == "cpu"
+    assert machine["gpu"] is None
+    assert machine["cuda"] is None
+    assert machine["cudnn"] is None
+    assert machine["determinism"] is None
+
+
+def test_a_cuda_run_records_gpu_cuda_cudnn_and_determinism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "Tesla T4")
+    monkeypatch.setattr(torch.version, "cuda", "12.8")
+    monkeypatch.setattr(torch.backends.cudnn, "version", lambda: 90100)
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    machine = run_module._accelerator("cuda")
+    assert machine["gpu"] == "Tesla T4"
+    assert machine["cuda"] == "12.8"
+    assert machine["cudnn"] == 90100
+    flags = machine["determinism"]
+    assert (
+        flags["deterministic_algorithms"]
+        is torch.are_deterministic_algorithms_enabled()
+    )
+    assert flags["cudnn_deterministic"] is torch.backends.cudnn.deterministic
+    assert flags["cudnn_benchmark"] is torch.backends.cudnn.benchmark
+    assert flags["cublas_workspace_config"] == ":4096:8"
+
+
 def test_head_behind_origin_main_is_allowed(repo: Path) -> None:
     commit(repo, "a")
     git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")

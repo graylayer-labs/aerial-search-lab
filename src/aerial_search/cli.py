@@ -46,6 +46,13 @@ def _part(text: str) -> tuple[int, int]:
     return k, n
 
 
+def _positive_hours(text: str) -> float:
+    hours = float(text)
+    if not hours > 0:
+        raise argparse.ArgumentTypeError(f"{text!r}: must be more than 0 hours")
+    return hours
+
+
 def _add_run_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--scratch",
@@ -115,6 +122,117 @@ def _finish(directory: Path, error: BaseException | None = None) -> None:
     from aerial_search.run import finish_run
 
     finish_run(directory, error)
+
+
+# train-baseline flags that sagemaker-train passes on to the job, in order
+BASELINE_FLAG_NAMES = [
+    "percent",
+    "seed",
+    "arch",
+    "input",
+    "steps",
+    "batch_size",
+    "eval_every",
+    "val_frames",
+    "top_k",
+    "workers",
+    "tile_overlap",
+    "frame_top_k",
+    "min_visible",
+    "empty_ratio",
+    "learning_rate",
+    "limit_frames",
+    "device",
+    "checkpoint_every",
+    "fold",
+]
+
+
+def _baseline_args(args: argparse.Namespace) -> list[str]:
+    """The `train-baseline` arguments the job runs, from `sagemaker-train`'s."""
+    out = [args.camera]
+    for name in BASELINE_FLAG_NAMES:
+        if getattr(args, name) is not None:  # an unset flag keeps its default
+            out += ["--" + name.replace("_", "-"), str(getattr(args, name))]
+    return [*out, "--scratch"] if args.scratch else out
+
+
+def _aws_session():
+    import boto3
+
+    return boto3.Session(region_name="eu-west-1")
+
+
+def _add_baseline_flags(base: argparse.ArgumentParser, *, cloud: bool) -> None:
+    """The `train-baseline` flags; `cloud` leaves out the paths the job sets."""
+    base.add_argument("camera", choices=["rgb", "thermal"])
+    base.add_argument("--percent", type=int, choices=PERCENTS, required=True)
+    base.add_argument("--seed", type=int, default=SEED)
+    if not cloud:
+        base.add_argument(
+            "--data-root", type=Path, default=Path("data/raw/wisard-full")
+        )
+    base.add_argument(
+        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
+    )
+    from aerial_search.experiments.baseline_experiment import (
+        ARCHITECTURES,
+        INPUTS,
+        BaselineRecipe,
+    )
+
+    base_defaults = BaselineRecipe()
+    base.add_argument("--arch", choices=ARCHITECTURES, default=base_defaults.arch)
+    base.add_argument(
+        "--input",
+        choices=INPUTS,
+        default=base_defaults.input,
+        help="cache: the frozen backbone's input size (the fair row); "
+        "native: no resize; tiled: overlapping native-resolution tiles of the "
+        "cache's input size, boxes stitched back to source pixels (#96)",
+    )
+    int_flags = ("steps", "batch_size", "eval_every", "val_frames", "top_k", "workers")
+    for name in (*int_flags, "tile_overlap", "frame_top_k"):
+        flag = "--" + name.replace("_", "-")
+        base.add_argument(flag, type=int, default=getattr(base_defaults, name))
+    for name in ("min_visible", "empty_ratio"):
+        flag = "--" + name.replace("_", "-")
+        base.add_argument(flag, type=float, default=getattr(base_defaults, name))
+    base.add_argument(
+        "--learning-rate", type=float, default=base_defaults.learning_rate
+    )
+    base.add_argument(
+        "--limit-frames",
+        type=int,
+        default=0,
+        help="scratch only: keep this many frames per split (timing check)",
+    )
+    base.add_argument(
+        "--device",
+        default="cuda" if cloud else "cpu",
+        help="cpu or cuda for a normal run (MPS diverged); the cloud job's "
+        "default is cuda",
+    )
+    if not cloud:
+        base.add_argument(
+            "--checkpoint-dir",
+            type=Path,
+            help="where checkpoints and test predictions go as they are made "
+            "(default: checkpoints/ in the run directory). If it holds a previous "
+            "attempt of the same run (config, seed, commit, manifests), that "
+            "attempt is resumed in a new run directory; another run's is refused. "
+            "On SageMaker: /opt/ml/checkpoints (#112)",
+        )
+    from aerial_search.experiments.baseline_experiment import CHECKPOINT_EVERY
+
+    base.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=CHECKPOINT_EVERY,
+        help="training steps between checkpoints (also one when training ends)",
+    )
+    _add_fold_flag(base)
+    _add_run_flags(base)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -344,69 +462,58 @@ def build_parser() -> argparse.ArgumentParser:
         help="fine-tune a COCO-pretrained torchvision detector on the same "
         "labels as train-head: one fold, camera, fraction, seed (#67)",
     )
-    base.add_argument("camera", choices=["rgb", "thermal"])
-    base.add_argument("--percent", type=int, choices=PERCENTS, required=True)
-    base.add_argument("--seed", type=int, default=SEED)
-    base.add_argument("--data-root", type=Path, default=Path("data/raw/wisard-full"))
-    base.add_argument(
-        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
-    )
-    from aerial_search.experiments.baseline_experiment import (
-        ARCHITECTURES,
-        INPUTS,
-        BaselineRecipe,
-    )
+    _add_baseline_flags(base, cloud=False)
 
-    base_defaults = BaselineRecipe()
-    base.add_argument("--arch", choices=ARCHITECTURES, default=base_defaults.arch)
-    base.add_argument(
-        "--input",
-        choices=INPUTS,
-        default=base_defaults.input,
-        help="cache: the frozen backbone's input size (the fair row); "
-        "native: no resize; tiled: overlapping native-resolution tiles of the "
-        "cache's input size, boxes stitched back to source pixels (#96)",
+    cloud = subcommands.add_parser(
+        "sagemaker-train",
+        help="run one train-baseline as one SageMaker spot training job on a "
+        "commit of main, after a cost check (#113); takes train-baseline's flags",
     )
-    int_flags = ("steps", "batch_size", "eval_every", "val_frames", "top_k", "workers")
-    for name in (*int_flags, "tile_overlap", "frame_top_k"):
-        flag = "--" + name.replace("_", "-")
-        base.add_argument(flag, type=int, default=getattr(base_defaults, name))
-    for name in ("min_visible", "empty_ratio"):
-        flag = "--" + name.replace("_", "-")
-        base.add_argument(flag, type=float, default=getattr(base_defaults, name))
-    base.add_argument(
-        "--learning-rate", type=float, default=base_defaults.learning_rate
+    _add_baseline_flags(cloud, cloud=True)
+    cloud.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="build and print the whole job request and the cost estimate; "
+        "call no AWS API",
     )
-    base.add_argument(
-        "--limit-frames",
+    cloud.add_argument(
+        "--attempt",
         type=int,
-        default=0,
-        help="scratch only: keep this many frames per split (timing check)",
+        default=1,
+        help="submission number of this run, in the job name; after a failed "
+        "job use 2: the same run name resumes from the run's S3 checkpoints",
     )
-    base.add_argument(
-        "--device",
-        default="cpu",
-        help="default and only device for a normal run: cpu (MPS diverged)",
+    cloud.add_argument("--max-runtime-hours", type=float, default=12.0)
+    cloud.add_argument(
+        "--max-wait-hours",
+        type=float,
+        default=18.0,
+        help="spot only: runtime plus time spent waiting for capacity",
     )
-    base.add_argument(
-        "--checkpoint-dir",
-        type=Path,
-        help="where checkpoints and test predictions go as they are made "
-        "(default: checkpoints/ in the run directory). If it holds a previous "
-        "attempt of the same run (config, seed, commit, manifests), that "
-        "attempt is resumed in a new run directory; another run's is refused. "
-        "On SageMaker: /opt/ml/checkpoints (#112)",
+    cloud.add_argument(
+        "--expected-hours",
+        type=_positive_hours,
+        help="for the estimate (default: from the measured laptop figures)",
     )
-    from aerial_search.experiments.baseline_experiment import CHECKPOINT_EVERY
+    cloud.add_argument(
+        "--spot-price-usd", type=float, help="per hour, for the estimate"
+    )
+    cloud.add_argument("--eur-per-usd", type=float, help="the guard's rate")
+    cloud.add_argument(
+        "--month-to-date-eur",
+        type=float,
+        help="this month's cloud spend so far (default: read from Cost Explorer; "
+        "refused if unreadable)",
+    )
+    cloud.add_argument("--image-uri", help="training container (default: pinned)")
+    cloud.add_argument("--role-arn", help="execution role (default: the project's)")
 
-    base.add_argument(
-        "--checkpoint-every",
-        type=int,
-        default=CHECKPOINT_EVERY,
-        help="training steps between checkpoints (also one when training ends)",
+    fetch = subcommands.add_parser(
+        "sagemaker-fetch",
+        help="copy a finished job's run directory from S3 into outputs/ and "
+        "record its status and billable seconds (#113)",
     )
-    _add_fold_flag(base)
-    _add_run_flags(base)
+    fetch.add_argument("job", help="the training job's name")
 
     rescore = subcommands.add_parser(
         "rescore",
@@ -700,6 +807,70 @@ def main(argv: list[str] | None = None) -> None:
         except (run.ProvenanceError, ValueError) as error:
             raise SystemExit(f"refusing to start: {error}") from error
         print(json.dumps(summary, indent=2))
+        return
+
+    if args.command == "sagemaker-train":
+        from aerial_search import run
+        from aerial_search.cloud import cost, launcher
+        from aerial_search.experiments import baseline_experiment
+
+        recipe = baseline_experiment.BaselineRecipe(
+            arch=args.arch, input=args.input, tile_overlap=args.tile_overlap
+        )
+        logical = args.run_name or baseline_experiment.default_run_name(
+            recipe, args.camera, args.fold, args.percent, args.seed
+        )
+        baseline_args = _baseline_args(args)
+        spot_price = args.spot_price_usd or cost.SPOT_USD_PER_HOUR
+        try:
+            plan = launcher.launch(
+                repo=None,
+                logical_run=logical,
+                baseline_args=baseline_args,
+                manifests=args.manifests,
+                scratch=args.scratch,
+                attempt=args.attempt,
+                spot=True,
+                max_runtime_hours=args.max_runtime_hours,
+                max_wait_hours=args.max_wait_hours,
+                expected_hours=cost.default_expected_hours(args.input, args.camera)
+                if args.expected_hours is None
+                else args.expected_hours,
+                eur_per_usd=args.eur_per_usd or cost.EUR_PER_USD,
+                month_to_date_eur=args.month_to_date_eur,
+                role_arn=args.role_arn,
+                image_uri=args.image_uri,
+                dry_run=args.dry_run,
+                session_factory=_aws_session,
+                spot_price_usd=spot_price,
+            )
+        except (run.ProvenanceError, cost.CostRefused, ValueError) as error:
+            raise SystemExit(f"refusing to launch: {error}") from error
+        print(
+            json.dumps(
+                {
+                    "dry_run": args.dry_run,
+                    "estimate": asdict(plan.estimate),
+                    "request": plan.request,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if args.command == "sagemaker-fetch":
+        from aerial_search import run
+        from aerial_search.cloud import launcher
+
+        try:
+            directories = launcher.fetch(
+                args.job,
+                _aws_session(),
+                run.outputs_dir(scratch=False),
+            )
+        except (OSError, run.ProvenanceError) as error:
+            raise SystemExit(f"cannot fetch: {error}") from error
+        print("\n".join(str(d) for d in directories))
         return
 
     if args.command == "rescore":
