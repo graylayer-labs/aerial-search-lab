@@ -245,3 +245,90 @@ def test_outputs_and_packages_are_handed_back_when_the_run_fails(
     record = json.loads((copied / "run.json").read_text())
     assert record["status"] == "failed"
     assert record["installed_packages"]["pytest"]
+
+
+@pytest.mark.parametrize(
+    ("spec", "name"),
+    [
+        ("torch>=2.13.0", "torch"),
+        ("torch~=2.13", "torch"),
+        ("torch<3", "torch"),
+        ("Torch==2.13.0", "torch"),
+        ("torchvision[extra] >= 0.28", "torchvision"),
+        ("torch ; sys_platform == 'linux'", "torch"),
+        ("torch@ https://example.com/torch.whl", "torch"),
+        ("torch-audio>=1", "torch-audio"),
+        ("Py_Coco.Tools>=2", "py-coco-tools"),
+        ("    # via torch", None),
+        ("", None),
+    ],
+)
+def test_requirement_names_are_parsed_per_pep_508(spec: str, name: str | None) -> None:
+    assert entry.requirement_name(spec) == name
+
+
+def test_torch_and_torchvision_from_the_container_are_never_reinstalled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = ["
+        '"torch~=2.13", "TorchVision[x]>=0.28", "torchmetrics>=1", '
+        '"pycocotools>=2.0.11"]\n'
+    )
+    dependencies = entry._dependencies(tmp_path)
+    assert dependencies == ["torchmetrics>=1", "pycocotools>=2.0.11"]
+    pins = tmp_path / "constraints.txt"
+    pins.write_text(
+        "torch==2.13.0\n    # via torchvision\ntorchvision==0.28.0 ; "
+        "sys_platform == 'linux'\npycocotools==2.0.11\n"
+    )
+    seen: list[list[str]] = []
+
+    def run(args: list[str], **_: Any) -> None:
+        seen.append(args)
+        used = Path(args[args.index("-c") + 1]).read_text()
+        assert "pycocotools==2.0.11" in used
+        assert "torch==" not in used and "torchvision==" not in used
+
+    monkeypatch.setattr(entry.subprocess, "run", run)
+    entry._install(dependencies, pins)
+    assert seen and seen[0][-2:] == dependencies
+    assert not any(a.startswith(("torch>", "torch=", "torchvision")) for a in seen[0])
+
+
+def test_every_attempt_gets_a_run_name_no_earlier_attempt_used(job) -> None:
+    seen: list[str] = []
+    for _ in range(3):
+        argv = prepare(job, job_env(job["code"], job["manifests"]))
+        name = argv[argv.index("--run-name") + 1]
+        assert name not in seen
+        seen.append(name)
+        # what Checkpoints.start_attempt does after start_run
+        job["checkpoints"].mkdir(exist_ok=True)
+        (job["checkpoints"] / "attempts.json").write_text(json.dumps(seen) + "\n")
+    assert len(set(seen)) == 3
+
+
+def test_a_restart_before_attempts_json_synced_still_gets_a_new_name(job) -> None:
+    # A spot restart keeps the job name, and attempts.json may not have
+    # reached S3 before the stop: both attempts see the same state.
+    from datetime import UTC, datetime
+
+    first = entry.attempt_run_name(
+        "exp", job["checkpoints"], now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC)
+    )
+    second = entry.attempt_run_name(
+        "exp", job["checkpoints"], now=datetime(2026, 10, 15, 9, 40, 0, tzinfo=UTC)
+    )
+    assert first != second
+    assert first.startswith("exp-a1-") and second.startswith("exp-a1-")
+
+
+def test_a_name_in_attempts_json_is_never_reused_even_if_counts_disagree(job) -> None:
+    job["checkpoints"].mkdir()
+    logical = entry.safe_name(BASE["logical_run"])
+    (job["checkpoints"] / "attempts.json").write_text(
+        json.dumps([f"{logical}-a2"]) + "\n"
+    )
+    argv = prepare(job, job_env(job["code"], job["manifests"]))
+    assert argv[argv.index("--run-name") + 1] != f"{logical}-a2"

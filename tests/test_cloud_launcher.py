@@ -297,6 +297,31 @@ def test_the_cost_guard_runs_before_anything_is_sent(
         launch(repo, tmp_path, max_runtime_hours=24.0, max_wait_hours=30.0)
 
 
+def test_the_launch_counts_running_jobs_before_sending(
+    repo: Path, tmp_path: Path
+) -> None:
+    class Session:
+        def client(self, name: str, **_: Any) -> Any:
+            raise AssertionError(f"nothing may be sent ({name})")
+
+    sessions: list[Any] = []
+
+    def lister(session: Any) -> list[dict]:
+        sessions.append(session)
+        return [running(seconds=12 * 3600)]  # 9.86 EUR worst case
+
+    with pytest.raises(cost.CostRefused, match="running"):
+        launch(
+            repo,
+            tmp_path,
+            dry_run=False,
+            session_factory=Session,
+            month_to_date_eur=50.0,
+            list_running=lister,
+        )
+    assert len(sessions) == 1
+
+
 def test_submission_uploads_the_source_then_creates_the_job(
     repo: Path, tmp_path: Path
 ) -> None:
@@ -334,3 +359,11 @@ def test_unreadable_manifests_are_refused_unless_scratch(tmp_path: Path) -> None
     with pytest.raises(run_module.ProvenanceError, match="cannot read"):
         launcher.check_manifests(tmp_path, scratch=False)
     launcher.check_manifests(tmp_path, scratch=True)
+
+
+def running(instance: str = "ml.g4dn.xlarge", seconds: int = 7200) -> dict:
+    return {
+        "TrainingJobName": "j",
+        "ResourceConfig": {"InstanceType": instance},
+        "StoppingCondition": {"MaxRuntimeInSeconds": seconds},
+    }
