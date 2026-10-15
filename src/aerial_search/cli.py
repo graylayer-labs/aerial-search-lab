@@ -483,9 +483,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="submission number of this run, in the job name; after a failed "
         "job use 2: the same run name resumes from the run's S3 checkpoints",
     )
-    cloud.add_argument(
-        "--on-demand", action="store_true", help="not spot (default: managed spot)"
-    )
     cloud.add_argument("--max-runtime-hours", type=float, default=12.0)
     cloud.add_argument(
         "--max-wait-hours",
@@ -833,7 +830,7 @@ def main(argv: list[str] | None = None) -> None:
                 manifests=args.manifests,
                 scratch=args.scratch,
                 attempt=args.attempt,
-                spot=not args.on_demand,
+                spot=True,
                 max_runtime_hours=args.max_runtime_hours,
                 max_wait_hours=args.max_wait_hours,
                 expected_hours=cost.default_expected_hours(args.input, args.camera)

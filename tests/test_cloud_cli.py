@@ -88,3 +88,13 @@ def test_sagemaker_fetch_lists_what_it_fetched(monkeypatch, capsys, tmp_path) ->
     monkeypatch.setattr(launcher, "fetch", lambda job, session, out: [tmp_path / "r"])
     cli.main(["sagemaker-fetch", "job-1"])
     assert capsys.readouterr().out.strip() == str(tmp_path / "r")
+
+
+def test_the_command_line_has_no_on_demand_flag() -> None:
+    from aerial_search import cli
+
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(
+            ["sagemaker-train", "rgb", "--percent", "10", "--fold", "f"]
+            + ["--on-demand"]
+        )
