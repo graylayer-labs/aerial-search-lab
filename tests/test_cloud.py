@@ -822,12 +822,11 @@ def test_a_predictions_file_refuses_a_second_model(tmp_path: Path) -> None:
 # --- fetching a finished job ------------------------------------------------------
 
 
-def test_fetch_puts_the_run_directory_under_outputs_and_records_billing(
-    tmp_path: Path,
-) -> None:
+def job_session(record: dict[str, Any]) -> Any:
+    """A fake AWS session whose finished job wrote one run with `record`."""
     payload = io.BytesIO()
     with tarfile.open(fileobj=payload, mode="w:gz") as tar:
-        data = b'{"status": "completed"}'
+        data = json.dumps(record).encode()
         info = tarfile.TarInfo("r-a1/run.json")
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
@@ -851,15 +850,66 @@ def test_fetch_puts_the_run_directory_under_outputs_and_records_billing(
         def client(self, name: str, **_: Any) -> Any:
             return {"s3": S3(), "sagemaker": Sm()}[name]
 
+    return Session()
+
+
+def attested_record(repo: Path, **over: Any) -> dict[str, Any]:
+    commit = run_git(repo, "rev-parse", "HEAD")
+    digest = source.archive_commit(repo, commit)[1]
+    attestation = {"commit": commit, "source_sha256": digest, "scratch": False}
+    return {
+        "status": "completed",
+        "scratch": False,
+        "commit": commit,
+        "attestation": {**attestation, "verified_source_sha256": digest, **over},
+    }
+
+
+def test_fetch_puts_the_run_directory_under_outputs_and_records_billing(
+    repo: Path, tmp_path: Path
+) -> None:
     out = tmp_path / "outputs"
     out.mkdir()
-    directories = launcher.fetch("ssl-aerial-exp-1", Session(), out)
+    session = job_session(attested_record(repo))
+    directories = launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
     assert directories == [out / "r-a1"]
     assert (out / "r-a1" / "run.json").exists()
     job_record = json.loads((out / "r-a1" / "cloud-job.json").read_text())
     assert job_record["BillableTimeInSeconds"] == 5400
     with pytest.raises(FileExistsError):
-        launcher.fetch("ssl-aerial-exp-1", Session(), out)
+        launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
+
+
+def test_fetch_refuses_an_attested_digest_that_is_not_the_commits(
+    repo: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "outputs"
+    out.mkdir()
+    for record in (
+        attested_record(repo, source_sha256="e" * 64),
+        attested_record(repo, verified_source_sha256="e" * 64),
+        {"status": "completed", "scratch": False},  # no attestation at all
+    ):
+        with pytest.raises(run_module.ProvenanceError):
+            launcher.fetch("ssl-aerial-exp-1", job_session(record), out, repo=repo)
+    assert not list(out.iterdir())
+
+
+def test_fetch_refuses_a_normal_run_whose_commit_is_not_on_origin_main(
+    repo: Path, tmp_path: Path
+) -> None:
+    (repo / "b.py").write_text("")
+    run_git(repo, "add", "b.py")
+    run_git(repo, "commit", "-m", "off main")
+    out = tmp_path / "outputs"
+    out.mkdir()
+    with pytest.raises(run_module.ProvenanceError, match="origin/main"):
+        launcher.fetch(
+            "ssl-aerial-exp-1", job_session(attested_record(repo)), out, repo=repo
+        )
+    assert not list(out.iterdir())
+    scratch = {**attested_record(repo, scratch=True), "scratch": True}
+    assert launcher.fetch("ssl-aerial-exp-1", job_session(scratch), out, repo=repo)
 
 
 # --- the command line -------------------------------------------------------------

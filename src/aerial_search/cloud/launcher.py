@@ -363,13 +363,56 @@ def launch(
     return plan
 
 
-def fetch(job: str, session: Any, outputs: Path) -> list[Path]:
+def check_attestation(record: dict[str, Any], repo_root: Path) -> None:
+    """Refuse a run whose attestation is not of a commit this repository has.
+
+    The job's attestation came through its environment, which anyone able to
+    create a job could have written. Here, on the laptop, the attested commit
+    is archived again: its digest must equal the attested one and the one the
+    job verified, and a normal run's commit must be on `origin/main`.
+    """
+    attestation = record.get("attestation")
+    if not isinstance(attestation, dict) or not attestation.get("commit"):
+        raise run_module.ProvenanceError("run.json has no attestation of its code")
+    commit = str(attestation["commit"])
+    try:
+        digest = source.archive_commit(repo_root, commit)[1]
+    except RuntimeError as error:
+        raise run_module.ProvenanceError(
+            f"cannot archive the attested commit {commit} here ({error}); "
+            "`git fetch` it first"
+        ) from None
+    for field in ("source_sha256", "verified_source_sha256"):
+        if attestation.get(field) != digest:
+            raise run_module.ProvenanceError(
+                f"the attested {field} {attestation.get(field)} is not the digest "
+                f"of commit {commit} ({digest}); the job did not run that commit"
+            )
+    if record.get("scratch") is True and attestation.get("scratch") is True:
+        return
+    on_main = run_module._git(
+        repo_root, "merge-base", "--is-ancestor", commit, run_module.MAIN_REF
+    )
+    if on_main.returncode != 0:
+        raise run_module.ProvenanceError(
+            f"the attested commit {commit} is not on origin/main "
+            f"({on_main.stderr.strip() or 'not an ancestor'}); a normal run "
+            "must be. `git fetch` if main moved"
+        )
+
+
+def fetch(
+    job: str, session: Any, outputs: Path, repo: Path | None = None
+) -> list[Path]:
     """Copy a finished job's run directory from S3 into `outputs/`.
 
-    Refuses to overwrite a run directory. Writes `cloud-job.json` beside each
-    run's `run.json`: the job's status and billable seconds, which only
-    SageMaker knows once the job has ended (`run.json` is left as the job
-    wrote it).
+    Refuses to overwrite a run directory, and refuses a run whose attestation
+    does not match its commit archived again here (`check_attestation`).
+    `repo` is for tests; by default the repository holding the running code.
+
+    Writes `cloud-job.json` beside each run's `run.json`: the job's status
+    and billable seconds, which only SageMaker knows once the job has ended
+    (`run.json` is left as the job wrote it).
     """
     description = session.client("sagemaker", region_name=REGION).describe_training_job(
         TrainingJobName=job
@@ -384,6 +427,10 @@ def fetch(job: str, session: Any, outputs: Path) -> list[Path]:
         with tarfile.open(archive) as tar:
             tar.extractall(unpacked, filter="data")
         entries = sorted(unpacked.iterdir())
+        root = run_module._repo_root((repo or run_module._code_location()).resolve())
+        for entry in entries:
+            if (entry / "run.json").exists():
+                check_attestation(json.loads((entry / "run.json").read_text()), root)
         clashes = [e.name for e in entries if (outputs / e.name).exists()]
         if clashes:
             raise FileExistsError(
