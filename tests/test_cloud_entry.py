@@ -165,3 +165,83 @@ def test_pins_for_the_containers_own_packages_are_dropped() -> None:
     assert entry.requirement_name("# comment") is None
     pins = "numpy==2.0\ntorch==2.13.0\ntorchvision==0.1\n# c\n"
     assert entry.without_provided(pins) == "numpy==2.0\n# c\n"
+
+
+# --- installing and running -------------------------------------------------------
+
+
+def test_the_container_keeps_its_own_torch(job, monkeypatch) -> None:
+    (job["code"] / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n'
+        'dependencies = ["torch>=2", "TorchVision", "numpy>=2"]\n'
+    )
+    deps = entry._dependencies(job["code"])
+    assert deps == ["numpy>=2"]
+    seen: dict[str, Any] = {}
+
+    def fake_pip(cmd: list[str], check: bool) -> None:
+        seen["cmd"] = cmd
+        seen["pins"] = Path(cmd[cmd.index("-c") + 1]).read_text()
+
+    monkeypatch.setattr(entry.subprocess, "run", fake_pip)
+    entry._install(deps, job["constraints"])
+    assert seen["pins"] == "pycocotools==2.0.11\n"
+    assert seen["cmd"][-1] == "numpy>=2"
+
+
+def test_installed_versions_name_what_is_missing() -> None:
+    got = entry._installed(["pytest>=8", "no-such-package-xyz"])
+    assert got["pytest"]
+    assert got["no-such-package-xyz"] is None
+    assert "torch" in got
+
+
+@pytest.fixture
+def in_job(job, tmp_path: Path, monkeypatch) -> dict[str, Any]:
+    (job["code"] / "pyproject.toml").write_text(
+        '[project]\nname = "x"\ndependencies = ["pytest>=8"]\n'
+    )
+    for name, key in [
+        ("CODE_ROOT", "code"),
+        ("DATASET", "data"),
+        ("MANIFESTS", "manifests"),
+        ("CONSTRAINTS", "constraints"),
+        ("CHECKPOINTS", "checkpoints"),
+    ]:
+        monkeypatch.setattr(entry, name, job[key])
+    monkeypatch.setattr(entry, "OUTPUT", tmp_path / "uploaded")
+    monkeypatch.setattr(entry, "_install", lambda deps, constraints: None)
+    return {**job, "env": job_env(job["code"], job["manifests"])}
+
+
+def test_a_refused_job_exits_before_installing_anything(in_job, monkeypatch) -> None:
+    (in_job["code"] / "src" / "aerial_search" / "a.py").write_text("x = 2\n")
+
+    def boom(*_: Any) -> None:
+        raise AssertionError("installed")
+
+    monkeypatch.setattr(entry, "_install", boom)
+    with pytest.raises(SystemExit, match="refusing to run: .*source"):
+        entry.main(in_job["env"])
+
+
+def test_outputs_and_packages_are_handed_back_when_the_run_fails(
+    in_job, monkeypatch
+) -> None:
+    from aerial_search import cli
+
+    outputs = in_job["code"] / "outputs"
+
+    def failing(argv: list[str]) -> None:
+        directory = outputs / argv[argv.index("--run-name") + 1]
+        directory.mkdir(parents=True)
+        (directory / "run.json").write_text(json.dumps({"status": "failed"}))
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(cli, "main", failing)
+    with pytest.raises(RuntimeError, match="out of memory"):
+        entry.main(in_job["env"])
+    [copied] = list(entry.OUTPUT.iterdir())
+    record = json.loads((copied / "run.json").read_text())
+    assert record["status"] == "failed"
+    assert record["installed_packages"]["pytest"]

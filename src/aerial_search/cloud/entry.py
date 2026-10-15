@@ -31,9 +31,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from aerial_search.cloud import safe_name, source
@@ -140,6 +147,11 @@ def requirement_name(spec: str) -> str | None:
     return re.sub(r"[-_.]+", "-", match.group(1)).lower()
 
 
+def _dependencies(code_root: Path) -> list[str]:
+    project = tomllib.loads((code_root / "pyproject.toml").read_text())["project"]
+    return [d for d in project["dependencies"] if requirement_name(d) not in PROVIDED]
+
+
 def without_provided(constraints: str) -> str:
     """The constraints minus torch and torchvision, so pip keeps the
     container's builds (CUDA-matched) instead of the laptop's."""
@@ -148,3 +160,66 @@ def without_provided(constraints: str) -> str:
         for line in constraints.splitlines(keepends=True)
         if requirement_name(line) not in PROVIDED
     )
+
+
+def _install(dependencies: list[str], constraints: Path) -> None:
+    with tempfile.TemporaryDirectory() as scratch:
+        pins = Path(scratch) / "constraints.txt"
+        pins.write_text(without_provided(constraints.read_text()))
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "-c",
+                str(pins),
+                *dependencies,
+            ],
+            check=True,
+        )
+
+
+def _installed(dependencies: list[str]) -> dict[str, str | None]:
+    versions: dict[str, str | None] = {}
+    for spec in [*PROVIDED, *dependencies]:
+        name = requirement_name(spec) or spec
+        try:
+            versions[name] = version(name)
+        except PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def main(environ: Mapping[str, str] | None = None) -> None:
+    """Entry point: verify, install the few missing packages, run, hand back."""
+    environ = os.environ if environ is None else environ
+    try:
+        argv = prepare(
+            environ,
+            code_root=CODE_ROOT,
+            data_root=DATASET,
+            manifests=MANIFESTS,
+            constraints=CONSTRAINTS,
+            checkpoint_dir=CHECKPOINTS,
+        )
+    except JobRefused as error:
+        raise SystemExit(f"refusing to run: {error}") from error
+    dependencies = _dependencies(CODE_ROOT)
+    _install(dependencies, CONSTRAINTS)
+    sys.path.insert(0, str(CODE_ROOT / "src"))
+    from aerial_search import cli, run
+
+    name = argv[argv.index("--run-name") + 1]
+    outputs = CODE_ROOT / "outputs"
+    try:
+        cli.main(argv)
+    finally:
+        directory = outputs / name
+        if (directory / "run.json").exists():
+            run.update_run(directory, installed_packages=_installed(dependencies))
+        if outputs.exists():
+            OUTPUT.mkdir(parents=True, exist_ok=True)
+            for item in outputs.iterdir():
+                shutil.copytree(item, OUTPUT / item.name, dirs_exist_ok=True)
