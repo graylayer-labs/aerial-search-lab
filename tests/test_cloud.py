@@ -628,7 +628,7 @@ def test_the_job_passes_the_baseline_flags_plus_its_own_paths(job) -> None:
     assert flags["--checkpoint-dir"] == str(job["checkpoints"])
     assert flags["--data-root"] == str(job["data"])
     assert flags["--manifests"] == str(job["manifests"])
-    assert flags["--run-name"].endswith("-a1")
+    assert "-a1-" in flags["--run-name"]
 
 
 def test_modified_code_in_the_job_is_refused(job) -> None:
@@ -712,6 +712,21 @@ def test_every_attempt_gets_a_run_name_no_earlier_attempt_used(job) -> None:
         job["checkpoints"].mkdir(exist_ok=True)
         (job["checkpoints"] / "attempts.json").write_text(json.dumps(seen) + "\n")
     assert len(set(seen)) == 3
+
+
+def test_a_restart_before_attempts_json_synced_still_gets_a_new_name(job) -> None:
+    # A spot restart keeps the job name, and attempts.json may not have
+    # reached S3 before the stop: both attempts see the same state.
+    from datetime import UTC, datetime
+
+    first = entry.attempt_run_name(
+        "exp", job["checkpoints"], now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC)
+    )
+    second = entry.attempt_run_name(
+        "exp", job["checkpoints"], now=datetime(2026, 10, 15, 9, 40, 0, tzinfo=UTC)
+    )
+    assert first != second
+    assert first.startswith("exp-a1-") and second.startswith("exp-a1-")
 
 
 def test_a_name_in_attempts_json_is_never_reused_even_if_counts_disagree(job) -> None:

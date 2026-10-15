@@ -2,7 +2,7 @@
 
 The same code path as the laptop: `aerial-search train-baseline` with the
 launcher's flags, plus the job's own paths, `--checkpoint-dir
-/opt/ml/checkpoints` and a per-attempt run name.
+/opt/ml/checkpoints` and a per-attempt run name (`<run>-a<n>-<UTC time>`).
 
 Provenance without git. The launcher verified the tree and `origin/main` on
 the laptop and archived exactly that commit. It sent two digests in the job's
@@ -39,6 +39,7 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -57,20 +58,26 @@ class JobRefused(RuntimeError):
     """The job will not run: its code or inputs are not what was launched."""
 
 
-def attempt_run_name(logical_run: str, checkpoint_dir: Path) -> str:
-    """`<run>-a<n>`, a name no earlier attempt of this run used.
+def attempt_run_name(
+    logical_run: str, checkpoint_dir: Path, now: datetime | None = None
+) -> str:
+    """`<run>-a<n>-<UTC time>`, a name no earlier attempt of this run used.
 
     A restart must never reuse a run directory name (`start_run` refuses an
     existing one). `attempts.json` in the checkpoint directory, synced to S3,
-    lists the earlier attempts' names.
+    lists the earlier attempts' names and gives `n`; the time, to the
+    microsecond, keeps two attempts apart even when a spot restart (same job
+    name) finds `attempts.json` not yet synced. The checkpoint directory
+    stays the same for every attempt of the run.
     """
     path = checkpoint_dir / "attempts.json"
     earlier = set(json.loads(path.read_text())) if path.exists() else set()
     base = safe_name(logical_run)
     n = len(earlier) + 1
-    while f"{base}-a{n}" in earlier:
+    while any(e == f"{base}-a{n}" or e.startswith(f"{base}-a{n}-") for e in earlier):
         n += 1
-    return f"{base}-a{n}"
+    stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{base}-a{n}-{stamp}"
 
 
 def prepare(
