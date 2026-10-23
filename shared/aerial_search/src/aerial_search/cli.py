@@ -155,115 +155,10 @@ def _finish(directory: Path, error: BaseException | None = None) -> None:
     finish_run(directory, error)
 
 
-# train-baseline flags that sagemaker-train passes on to the job, in order
-BASELINE_FLAG_NAMES = [
-    "percent",
-    "seed",
-    "arch",
-    "input",
-    "steps",
-    "batch_size",
-    "eval_every",
-    "val_frames",
-    "top_k",
-    "workers",
-    "tile_overlap",
-    "frame_top_k",
-    "min_visible",
-    "empty_ratio",
-    "learning_rate",
-    "limit_frames",
-    "device",
-    "checkpoint_every",
-    "fold",
-]
-
-
-def _baseline_args(args: argparse.Namespace) -> list[str]:
-    """The `train-baseline` arguments the job runs, from `sagemaker-train`'s."""
-    out = [args.camera]
-    for name in BASELINE_FLAG_NAMES:
-        if getattr(args, name) is not None:  # an unset flag keeps its default
-            out += ["--" + name.replace("_", "-"), str(getattr(args, name))]
-    return [*out, "--scratch"] if args.scratch else out
-
-
 def _aws_session():
     import boto3
 
     return boto3.Session(region_name="eu-west-1")
-
-
-def _add_baseline_flags(base: argparse.ArgumentParser, *, cloud: bool) -> None:
-    """The `train-baseline` flags; `cloud` leaves out the paths the job sets."""
-    base.add_argument("camera", choices=["rgb", "thermal"])
-    base.add_argument("--percent", type=int, choices=PERCENTS, required=True)
-    base.add_argument("--seed", type=int, default=SEED)
-    if not cloud:
-        base.add_argument(
-            "--data-root", type=Path, default=Path("data/raw/wisard-full")
-        )
-    base.add_argument(
-        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
-    )
-    from finetuned_detector.experiment import (
-        ARCHITECTURES,
-        INPUTS,
-        BaselineRecipe,
-    )
-
-    base_defaults = BaselineRecipe()
-    base.add_argument("--arch", choices=ARCHITECTURES, default=base_defaults.arch)
-    base.add_argument(
-        "--input",
-        choices=INPUTS,
-        default=base_defaults.input,
-        help="cache: the frozen backbone's input size (the fair row); "
-        "native: no resize; tiled: overlapping native-resolution tiles of the "
-        "cache's input size, boxes stitched back to source pixels (#96)",
-    )
-    int_flags = ("steps", "batch_size", "eval_every", "val_frames", "top_k", "workers")
-    for name in (*int_flags, "tile_overlap", "frame_top_k"):
-        flag = "--" + name.replace("_", "-")
-        base.add_argument(flag, type=int, default=getattr(base_defaults, name))
-    for name in ("min_visible", "empty_ratio"):
-        flag = "--" + name.replace("_", "-")
-        base.add_argument(flag, type=float, default=getattr(base_defaults, name))
-    base.add_argument(
-        "--learning-rate", type=float, default=base_defaults.learning_rate
-    )
-    base.add_argument(
-        "--limit-frames",
-        type=int,
-        default=0,
-        help="scratch only: keep this many frames per split (timing check)",
-    )
-    base.add_argument(
-        "--device",
-        default="cuda" if cloud else "cpu",
-        help="cpu or cuda for a normal run (MPS diverged); the cloud job's "
-        "default is cuda",
-    )
-    if not cloud:
-        base.add_argument(
-            "--checkpoint-dir",
-            type=Path,
-            help="where checkpoints and test predictions go as they are made "
-            "(default: checkpoints/ in the run directory). If it holds a previous "
-            "attempt of the same run (config, seed, commit, manifests), that "
-            "attempt is resumed in a new run directory; another run's is refused. "
-            "On SageMaker: /opt/ml/checkpoints (#112)",
-        )
-    from finetuned_detector.experiment import CHECKPOINT_EVERY
-
-    base.add_argument(
-        "--checkpoint-every",
-        type=int,
-        default=CHECKPOINT_EVERY,
-        help="training steps between checkpoints (also one when training ends)",
-    )
-    _add_fold_flag(base)
-    _add_run_flags(base)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -488,19 +383,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fold_flag(head)
     _add_run_flags(head)
 
+    from finetuned_detector import cli as project  # moves to the registry next
+
     base = subcommands.add_parser(
         "train-baseline",
         help="fine-tune a COCO-pretrained torchvision detector on the same "
         "labels as train-head: one fold, camera, fraction, seed (#67)",
     )
-    _add_baseline_flags(base, cloud=False)
+    project.add_baseline_flags(base, cloud=False)
 
     cloud = subcommands.add_parser(
         "sagemaker-train",
         help="run one train-baseline as one SageMaker spot training job on a "
         "commit of main, after a cost check (#113); takes train-baseline's flags",
     )
-    _add_baseline_flags(cloud, cloud=True)
+    project.add_baseline_flags(cloud, cloud=True)
     cloud.add_argument(
         "--dry-run",
         action="store_true",
@@ -851,6 +748,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sagemaker-train":
         from aerial_search import run
         from aerial_search.cloud import cost, launcher
+        from finetuned_detector import cli as project
         from finetuned_detector import experiment as baseline_experiment
 
         recipe = baseline_experiment.BaselineRecipe(
@@ -859,7 +757,7 @@ def main(argv: list[str] | None = None) -> None:
         logical = args.run_name or baseline_experiment.default_run_name(
             recipe, args.camera, args.fold, args.percent, args.seed
         )
-        baseline_args = _baseline_args(args)
+        baseline_args = project.baseline_args(args)
         spot_price = args.spot_price_usd or cost.SPOT_USD_PER_HOUR
         try:
             plan = launcher.launch(
