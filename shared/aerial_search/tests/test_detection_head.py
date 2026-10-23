@@ -158,14 +158,6 @@ def test_perfect_predictions_decode_to_a_perfect_score(entry):
     assert report.overall.ap_iou50 == pytest.approx(1.0)
 
 
-def test_record_boxes_convert_normalised_centres_to_pixels():
-    record = {
-        "size": [640, 512],
-        "boxes": [{"x_center": 0.5, "y_center": 0.25, "width": 0.1, "height": 0.2}],
-    }
-    assert he.record_boxes(record)[0] == pytest.approx([288.0, 76.8, 352.0, 179.2])
-
-
 # --- the head ----------------------------------------------------------------
 
 
@@ -240,47 +232,6 @@ def rec(site_day: str, image: str, boxes: list | None = None) -> dict:
     if boxes is not None:
         record["boxes"] = boxes
     return record
-
-
-def test_a_training_manifest_holding_a_test_site_day_frame_is_refused(tmp_path):
-    path = write(
-        tmp_path / "train.jsonl",
-        [
-            rec("210417_MtErie", "210417_MtErie_IR_1/a.jpg", []),
-            rec("210417_MtErie", "220109_Baker_IR_1/b.jpg", []),  # leaked path
-        ],
-    )
-    with pytest.raises(he.LeakError, match="220109_Baker"):
-        he.load_split(path, fold="220109_Baker", role="train")
-    path = write(
-        tmp_path / "v.jsonl", [rec("220109_Baker", "220109_Baker_I/b.jpg", [])]
-    )
-    with pytest.raises(he.LeakError):
-        he.load_split(path, fold="220109_Baker", role="validation")
-
-
-def test_a_test_manifest_must_hold_only_the_test_site_day(tmp_path):
-    path = write(
-        tmp_path / "t.jsonl", [rec("210417_MtErie", "210417_MtErie_I/a.jpg", [])]
-    )
-    with pytest.raises(he.LeakError):
-        he.load_split(path, fold="220109_Baker", role="test")
-
-
-def test_only_frames_the_manifest_lists_as_labelled_become_negatives(tmp_path):
-    empty = rec("210417_MtErie", "210417_MtErie_IR_1/a.jpg", [])
-    unlabelled = rec("210417_MtErie", "210417_MtErie_IR_1/b.jpg")  # no "boxes"
-    path = write(tmp_path / "train.jsonl", [empty])
-    records = he.load_split(path, fold="220109_Baker", role="train")
-    assert [r["image"] for r in records] == [empty["image"]]
-    assert he.record_boxes(records[0]).shape == (0, 4)
-
-    path = write(tmp_path / "bad.jsonl", [empty, unlabelled])
-    with pytest.raises(ValueError, match="no boxes field"):
-        he.load_split(path, fold="220109_Baker", role="train")
-
-
-# --- the cache a run reads ---------------------------------------------------
 
 
 def fake_cache(

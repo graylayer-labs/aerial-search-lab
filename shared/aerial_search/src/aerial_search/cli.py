@@ -720,6 +720,7 @@ def main(argv: list[str] | None = None) -> None:
         import torch
 
         from aerial_search import run
+        from aerial_search.data import records
         from aerial_search.experiments import feature_cache, head_experiment
         from aerial_search.models.components import get_device
 
@@ -768,7 +769,7 @@ def main(argv: list[str] | None = None) -> None:
             )
         except (
             feature_cache.CacheError,
-            head_experiment.LeakError,
+            records.LeakError,
             run.ProvenanceError,
             ValueError,
         ) as error:
@@ -874,7 +875,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "rescore":
-        from aerial_search.experiments import predictions
+        from aerial_search.evaluation import predictions
 
         try:
             record = json.loads((args.run / "run.json").read_text())

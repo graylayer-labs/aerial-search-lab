@@ -27,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
+from aerial_search.data.records import record_boxes, subsample
 from aerial_search.evaluation.detection import (
     DetectionReport,
     GroundTruth,
@@ -164,8 +165,6 @@ def read_model_id(path: Path) -> str | None:
 
 def truths(records: Sequence[dict]) -> list[GroundTruth]:
     """The scorer's ground truth for fold records (camera and flight grouping)."""
-    from aerial_search.experiments.head_experiment import record_boxes
-
     return [
         GroundTruth(
             str(r["image"]), record_boxes(r), str(r["camera"]), str(r["collection_id"])
@@ -192,8 +191,6 @@ def score_file(path: Path, records: Sequence[dict]) -> DetectionReport:
 def _test_records(run_dir: Path, record: dict) -> list[dict]:
     """The run's test frames, from the manifest it recorded, checked by hash."""
     import hashlib
-
-    from aerial_search.experiments.baseline_experiment import subsample
 
     tests = [i for i in record["inputs"] if Path(i["path"]).name == "test.jsonl"]
     if len(tests) != 1:

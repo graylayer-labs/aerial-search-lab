@@ -15,8 +15,8 @@ import torch
 from PIL import Image
 
 from aerial_search import cli
+from aerial_search.evaluation import predictions as pr
 from aerial_search.experiments import baseline_experiment as be
-from aerial_search.experiments import predictions as pr
 
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
 SPEC = be.TileSpec(size=(32, 24), overlap=16, min_visible=0.5, empty_ratio=0.5)

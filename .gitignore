@@ -14,3 +14,5 @@ outputs/
 .claude/skills/archify
 .archify/
 .archify-*
+.coverage
+coverage.xml
