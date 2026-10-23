@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
-from dataclasses import asdict
+import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,35 @@ DATASETS = {WISARD_SAMPLE.name: WISARD_SAMPLE, WISARD_FULL.name: WISARD_FULL}
 
 SEED = 7  # both experiments seed with 7; recorded in run.json
 VIEW = "paired"  # both experiments read the fold's paired-view manifests
+
+
+@dataclass(frozen=True)
+class ProjectCommand:
+    """A command whose code lives in a project package (projects/<name>/)."""
+
+    module: str  # defines main(argv); imported only when the command runs
+    help: str
+
+
+# Each approach's own commands. Shared code never imports a project: its module
+# is imported only when its command runs, and is handed the rest of argv. The
+# table is static, not entry points, because a SageMaker job puts the code on
+# sys.path without installing it, so no entry point metadata exists there.
+PROJECT_COMMANDS: dict[str, ProjectCommand] = {}
+
+
+def _run_project_command(name: str, argv: list[str]) -> None:
+    module_name = PROJECT_COMMANDS[name].module
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as error:
+        if error.name and f"{module_name}.".startswith(f"{error.name}."):
+            raise SystemExit(
+                f"`aerial-search {name}` needs {module_name}, which is not "
+                "installed; run `uv sync --dev`"
+            ) from error
+        raise
+    module.main(argv)
 
 
 def _part(text: str) -> tuple[int, int]:
@@ -569,11 +600,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     table.add_argument("--json", type=Path, help="also write the summary as JSON")
 
+    for name, command in PROJECT_COMMANDS.items():
+        subcommands.add_parser(name, help=command.help, add_help=False)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Run a project data command."""
+    """Run a shared command, or hand a project's command to its package."""
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in PROJECT_COMMANDS:
+        _run_project_command(argv[0], argv[1:])
+        return
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
         source = DATASETS[args.dataset]

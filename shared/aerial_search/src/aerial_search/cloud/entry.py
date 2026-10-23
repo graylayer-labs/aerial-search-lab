@@ -149,13 +149,17 @@ def requirement_name(spec: str) -> str | None:
 
 
 def _members(code_root: Path) -> list[Path]:
-    """The uv workspace members: shared/* and projects/*, not the template."""
-    return [
+    """The uv workspace members, as the root's `[tool.uv.workspace]` lists them."""
+    root = tomllib.loads((code_root / "pyproject.toml").read_text())
+    workspace = root["tool"]["uv"]["workspace"]
+    excluded = {p for g in workspace.get("exclude", []) for p in code_root.glob(g)}
+    found = [
         member
-        for pattern in ("shared/*", "projects/*")
+        for pattern in workspace["members"]
         for member in sorted(code_root.glob(pattern))
-        if member.name != "_template" and (member / "pyproject.toml").is_file()
+        if member not in excluded and (member / "pyproject.toml").is_file()
     ]
+    return list(dict.fromkeys(found))
 
 
 def source_dirs(code_root: Path) -> list[Path]:
