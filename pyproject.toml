@@ -44,3 +44,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.src]
+# The template is copied, not installed, so its imports cannot resolve here.
+exclude = ["projects/_template"]

@@ -1,0 +1,22 @@
+# Copy this folder to projects/<name>/, then replace my-approach / my_approach
+# with the new name (here, in src/ and in tests/). See projects/README.md.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "my-approach"
+version = "0.1.0"
+description = "<one line: the approach to finding people in aerial frames>"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Eoin McAllister" }]
+dependencies = ["aerial-search"]
+
+[tool.uv.sources]
+aerial-search = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/my_approach"]
