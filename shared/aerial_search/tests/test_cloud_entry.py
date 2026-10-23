@@ -10,6 +10,12 @@ import pytest
 from aerial_search import PACKAGE_DIR
 from aerial_search.cloud import entry, launcher, source
 
+WORKSPACE = (
+    "[tool.uv.workspace]\n"
+    'members = ["shared/*", "projects/*"]\n'
+    'exclude = ["projects/_template"]\n'
+)
+
 # --- the request ------------------------------------------------------------------
 
 BASE: dict[str, Any] = dict(
@@ -69,6 +75,7 @@ def job(tmp_path: Path) -> dict[str, Path]:
     code = tmp_path / "code"
     (code / PACKAGE_DIR).mkdir(parents=True)
     (code / PACKAGE_DIR / "a.py").write_text("x = 1\n")
+    (code / "pyproject.toml").write_text(WORKSPACE)
     manifests = tmp_path / "in" / "manifests"
     write_manifests(manifests)
     pins = tmp_path / "in" / "constraints" / "constraints.txt"
@@ -281,7 +288,7 @@ def test_torch_and_torchvision_from_the_container_are_never_reinstalled(
         (tmp_path / member / "pyproject.toml").write_text(
             f'[project]\nname = "{Path(member).name}"\ndependencies = [{text}]\n'
         )
-    (tmp_path / "pyproject.toml").write_text("[tool.uv.workspace]\n")
+    (tmp_path / "pyproject.toml").write_text(WORKSPACE)
     dependencies = entry._dependencies(tmp_path)
     assert dependencies == ["torchmetrics>=1", "pycocotools>=2.0.11"]
     pins = tmp_path / "constraints.txt"

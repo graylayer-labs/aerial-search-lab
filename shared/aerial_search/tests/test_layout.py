@@ -43,12 +43,33 @@ def test_the_sagemaker_entry_script_puts_the_shared_package_on_the_path() -> Non
 
 
 def test_the_job_puts_every_member_source_on_the_path(tmp_path: Path) -> None:
-    for member in ("shared/aerial_search", "projects/b", "projects/_template"):
+    # The members are what the root's [tool.uv.workspace] says, not a guess.
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.uv.workspace]\n"
+        'members = ["shared/*", "projects/*", "extra/x"]\n'
+        'exclude = ["projects/_template", "projects/old"]\n'
+    )
+    for member in (
+        "shared/aerial_search",
+        "projects/b",
+        "projects/_template",
+        "projects/old",
+        "extra/x",
+        "extra/y",
+    ):
         (tmp_path / member / "src").mkdir(parents=True)
         (tmp_path / member / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "projects" / "README.md").write_text("not a member\n")
     assert entry.source_dirs(tmp_path) == [
         tmp_path / "shared" / "aerial_search" / "src",
         tmp_path / "projects" / "b" / "src",
+        tmp_path / "extra" / "x" / "src",
+    ]
+
+
+def test_the_job_reads_the_same_members_as_uv() -> None:
+    assert entry.source_dirs(workspace_root()) == [
+        workspace_root() / "shared" / "aerial_search" / "src"
     ]
 
 
