@@ -48,7 +48,18 @@ class ProjectCommand:
 # is imported only when its command runs, and is handed the rest of argv. The
 # table is static, not entry points, because a SageMaker job puts the code on
 # sys.path without installing it, so no entry point metadata exists there.
-PROJECT_COMMANDS: dict[str, ProjectCommand] = {}
+PROJECT_COMMANDS: dict[str, ProjectCommand] = {
+    "train-baseline": ProjectCommand(
+        "finetuned_detector.cli",
+        "fine-tune a COCO-pretrained torchvision detector on the same labels as "
+        "train-head: one fold, camera, fraction, seed (#67)",
+    ),
+    "sagemaker-train": ProjectCommand(
+        "finetuned_detector.cli",
+        "run one train-baseline as one SageMaker spot training job on a commit "
+        "of main, after a cost check (#113); takes train-baseline's flags",
+    ),
+}
 
 
 def _run_project_command(name: str, argv: list[str]) -> None:
@@ -383,59 +394,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fold_flag(head)
     _add_run_flags(head)
 
-    from finetuned_detector import cli as project  # moves to the registry next
-
-    base = subcommands.add_parser(
-        "train-baseline",
-        help="fine-tune a COCO-pretrained torchvision detector on the same "
-        "labels as train-head: one fold, camera, fraction, seed (#67)",
-    )
-    project.add_baseline_flags(base, cloud=False)
-
-    cloud = subcommands.add_parser(
-        "sagemaker-train",
-        help="run one train-baseline as one SageMaker spot training job on a "
-        "commit of main, after a cost check (#113); takes train-baseline's flags",
-    )
-    project.add_baseline_flags(cloud, cloud=True)
-    cloud.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="build and print the whole job request and the cost estimate; "
-        "call no AWS API",
-    )
-    cloud.add_argument(
-        "--attempt",
-        type=int,
-        default=1,
-        help="submission number of this run, in the job name; after a failed "
-        "job use 2: the same run name resumes from the run's S3 checkpoints",
-    )
-    cloud.add_argument("--max-runtime-hours", type=float, default=12.0)
-    cloud.add_argument(
-        "--max-wait-hours",
-        type=float,
-        default=18.0,
-        help="spot only: runtime plus time spent waiting for capacity",
-    )
-    cloud.add_argument(
-        "--expected-hours",
-        type=_positive_hours,
-        help="for the estimate (default: from the measured laptop figures)",
-    )
-    cloud.add_argument(
-        "--spot-price-usd", type=float, help="per hour, for the estimate"
-    )
-    cloud.add_argument("--eur-per-usd", type=float, help="the guard's rate")
-    cloud.add_argument(
-        "--month-to-date-eur",
-        type=float,
-        help="this month's cloud spend so far (default: read from Cost Explorer; "
-        "refused if unreadable)",
-    )
-    cloud.add_argument("--image-uri", help="training container (default: pinned)")
-    cloud.add_argument("--role-arn", help="execution role (default: the project's)")
-
     fetch = subcommands.add_parser(
         "sagemaker-fetch",
         help="copy a finished job's run directory from S3 into outputs/ and "
@@ -507,7 +465,7 @@ def main(argv: list[str] | None = None) -> None:
     """Run a shared command, or hand a project's command to its package."""
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in PROJECT_COMMANDS:
-        _run_project_command(argv[0], argv[1:])
+        _run_project_command(argv[0], argv)
         return
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
@@ -710,89 +668,6 @@ def main(argv: list[str] | None = None) -> None:
         ) as error:
             raise SystemExit(f"refusing to start: {error}") from error
         print(json.dumps(summary, indent=2))
-        return
-
-    if args.command == "train-baseline":
-        import torch
-
-        from aerial_search import run
-        from finetuned_detector import experiment as baseline_experiment
-
-        names = ("arch", "input", "steps", "batch_size", "learning_rate")
-        names += ("eval_every", "val_frames", "top_k", "workers")
-        names += ("tile_overlap", "min_visible", "empty_ratio", "frame_top_k")
-        recipe = baseline_experiment.BaselineRecipe(
-            **{n: getattr(args, n) for n in names}
-        )
-        try:
-            summary = baseline_experiment.run_baseline(
-                manifests=args.manifests,
-                data_root=args.data_root,
-                fold=args.fold,
-                camera=args.camera,
-                percent=args.percent,
-                seed=args.seed,
-                recipe=recipe,
-                scratch=args.scratch,
-                run_name=args.run_name,
-                device=torch.device(args.device),
-                limit_frames=args.limit_frames,
-                checkpoint_dir=args.checkpoint_dir,
-                checkpoint_every=args.checkpoint_every,
-            )
-        except (run.ProvenanceError, ValueError) as error:
-            raise SystemExit(f"refusing to start: {error}") from error
-        print(json.dumps(summary, indent=2))
-        return
-
-    if args.command == "sagemaker-train":
-        from aerial_search import run
-        from aerial_search.cloud import cost, launcher
-        from finetuned_detector import cli as project
-        from finetuned_detector import experiment as baseline_experiment
-
-        recipe = baseline_experiment.BaselineRecipe(
-            arch=args.arch, input=args.input, tile_overlap=args.tile_overlap
-        )
-        logical = args.run_name or baseline_experiment.default_run_name(
-            recipe, args.camera, args.fold, args.percent, args.seed
-        )
-        baseline_args = project.baseline_args(args)
-        spot_price = args.spot_price_usd or cost.SPOT_USD_PER_HOUR
-        try:
-            plan = launcher.launch(
-                repo=None,
-                logical_run=logical,
-                baseline_args=baseline_args,
-                manifests=args.manifests,
-                scratch=args.scratch,
-                attempt=args.attempt,
-                spot=True,
-                max_runtime_hours=args.max_runtime_hours,
-                max_wait_hours=args.max_wait_hours,
-                expected_hours=cost.default_expected_hours(args.input, args.camera)
-                if args.expected_hours is None
-                else args.expected_hours,
-                eur_per_usd=args.eur_per_usd or cost.EUR_PER_USD,
-                month_to_date_eur=args.month_to_date_eur,
-                role_arn=args.role_arn,
-                image_uri=args.image_uri,
-                dry_run=args.dry_run,
-                session_factory=_aws_session,
-                spot_price_usd=spot_price,
-            )
-        except (run.ProvenanceError, cost.CostRefused, ValueError) as error:
-            raise SystemExit(f"refusing to launch: {error}") from error
-        print(
-            json.dumps(
-                {
-                    "dry_run": args.dry_run,
-                    "estimate": asdict(plan.estimate),
-                    "request": plan.request,
-                },
-                indent=2,
-            )
-        )
         return
 
     if args.command == "sagemaker-fetch":
