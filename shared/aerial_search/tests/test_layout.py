@@ -71,6 +71,7 @@ def test_the_job_reads_the_same_members_as_uv() -> None:
     assert entry.source_dirs(workspace_root()) == [
         workspace_root() / "shared" / "aerial_search" / "src",
         workspace_root() / "projects" / "finetuned-detector" / "src",
+        workspace_root() / "projects" / "frozen-head" / "src",
     ]
 
 

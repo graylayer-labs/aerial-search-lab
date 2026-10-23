@@ -14,9 +14,9 @@ from aerial_search.evaluation.detection import (
     Prediction,
     evaluate_detections,
 )
-from aerial_search.experiments import head_experiment as he
-from aerial_search.experiments.feature_cache import CacheError
-from aerial_search.models.head import CentreHead, centre_loss
+from frozen_head import head_experiment as he
+from frozen_head.feature_cache import CacheError
+from frozen_head.head import CentreHead, centre_loss
 
 # Geometry as the real cache records it (index.jsonl), with a small feature dim.
 RGB = {
@@ -534,7 +534,7 @@ def fake_run(
     ],
 )
 def test_the_table_refuses_runs_made_differently(tmp_path, change, field):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path, "rgb", "A", 100, 0.2, 0.1)
     fake_run(tmp_path, "thermal", "B", 1, 0.4, 0.3, **change)
@@ -543,7 +543,7 @@ def test_the_table_refuses_runs_made_differently(tmp_path, change, field):
 
 
 def test_the_table_records_commits_and_warns_when_they_differ(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path, "rgb", "A", 100, 0.2, 0.1)
     fake_run(tmp_path, "rgb", "B", 100, 0.4, 0.3, commit="def")
@@ -554,7 +554,7 @@ def test_the_table_records_commits_and_warns_when_they_differ(tmp_path):
 
 
 def test_size_cells_say_how_many_folds_had_people_of_that_size(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path, "rgb", "A", 100, 0.2, 0.1, tiny=False)  # no tiny people
     fake_run(tmp_path, "rgb", "B", 100, 0.4, 0.3)
@@ -568,7 +568,7 @@ def test_size_cells_say_how_many_folds_had_people_of_that_size(tmp_path):
 
 
 def test_the_table_gives_each_fold_and_the_mean_and_spread(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path, "rgb", "A", 100, 0.2, 0.1)
     fake_run(tmp_path, "rgb", "B", 100, 0.4, 0.3)
@@ -592,7 +592,7 @@ def test_the_table_gives_each_fold_and_the_mean_and_spread(tmp_path):
     "record", [{"scratch": True}, {"status": "started"}, {"status": "failed"}]
 )
 def test_the_table_refuses_scratch_or_unfinished_runs(tmp_path, record):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path, "rgb", "A", 100, 0.2, 0.1)
     fake_run(tmp_path, "rgb", "B", 100, 0.4, 0.3, **record)
@@ -601,7 +601,7 @@ def test_the_table_refuses_scratch_or_unfinished_runs(tmp_path, record):
 
 
 def test_the_table_refuses_two_runs_of_the_same_cell(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path / "one", "rgb", "A", 100, 0.2, 0.1)
     fake_run(tmp_path / "two", "rgb", "A", 100, 0.4, 0.3)
@@ -624,7 +624,7 @@ def arm_dirs(tmp_path: Path, scores: dict[str, dict[str, tuple[float, float]]]):
 
 
 def test_a_run_without_an_arm_is_the_replicate_arm(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path, "thermal", "A", 10, 0.2, 0.1)  # a #66 run
 
@@ -634,7 +634,7 @@ def test_a_run_without_an_arm_is_the_replicate_arm(tmp_path):
 def test_the_ablation_table_has_each_arm_per_fold_with_spread_and_the_paired_change(
     tmp_path,
 ):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     roots = arm_dirs(
         tmp_path,
@@ -660,7 +660,7 @@ def test_the_ablation_table_has_each_arm_per_fold_with_spread_and_the_paired_cha
 
 
 def test_the_ablation_needs_the_control_arm(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     roots = arm_dirs(tmp_path, {"equalise": {"A": (0.3, 0.1)}})
     by_arm = head_table.collect_arms(roots, camera="thermal", percents=["10"])
@@ -670,7 +670,7 @@ def test_the_ablation_needs_the_control_arm(tmp_path):
 
 
 def test_one_directory_may_hold_one_arm_and_an_arm_may_not_appear_twice(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path / "x", "thermal", "A", 10, 0.2, 0.1, arm="replicate")
     fake_run(tmp_path / "x", "thermal", "B", 10, 0.2, 0.1, arm="equalise")
@@ -684,7 +684,7 @@ def test_one_directory_may_hold_one_arm_and_an_arm_may_not_appear_twice(tmp_path
 
 
 def test_arms_must_share_a_seed_but_a_recipe_difference_is_stated_not_hidden(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path / "a", "thermal", "A", 10, 0.2, 0.1, arm="replicate")
     fake_run(
@@ -716,7 +716,7 @@ def test_arms_must_share_a_seed_but_a_recipe_difference_is_stated_not_hidden(tmp
 
 
 def test_warm_arms_are_compared_with_the_warm_control_not_the_cold_arm(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     for arm, a25 in (("replicate", 0.5), ("replicate-warm", 0.2), ("stem-warm", 0.3)):
         root = tmp_path / arm
@@ -741,7 +741,7 @@ def test_warm_arms_are_compared_with_the_warm_control_not_the_cold_arm(tmp_path)
 
 
 def test_an_arm_whose_cache_settings_differ_is_noted(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     base = {"model": "m", "pooling": 2, "token_budget": 1024}
     for arm, settings in (
@@ -766,7 +766,7 @@ def test_an_arm_whose_cache_settings_differ_is_noted(tmp_path):
 
 
 def test_the_ablation_warns_when_arms_come_from_different_commits(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path / "a", "thermal", "A", 10, 0.2, 0.1, arm="replicate")
     fake_run(tmp_path / "b", "thermal", "A", 10, 0.3, 0.1, arm="equalise", commit="def")
@@ -779,7 +779,7 @@ def test_the_ablation_warns_when_arms_come_from_different_commits(tmp_path):
 
 
 def test_the_plain_table_refuses_warm_and_non_replicate_runs(tmp_path):
-    from aerial_search.experiments import head_table
+    from aerial_search.evaluation import head_table
 
     fake_run(tmp_path / "w", "thermal", "A", 10, 0.2, 0.1)
     path = tmp_path / "w" / "thermal-A-10" / "run.json"

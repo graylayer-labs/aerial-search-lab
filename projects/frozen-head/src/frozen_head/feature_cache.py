@@ -40,8 +40,8 @@ from typing import Any, Protocol
 import numpy as np
 from PIL import Image
 
-from aerial_search.models.backbone import Extraction
-from aerial_search.models.thermal_input import DEFAULT_ARM, input_transform
+from frozen_head.backbone import Extraction
+from frozen_head.thermal_input import DEFAULT_ARM, input_transform
 
 # A resumed run recomputes a sample on the same device with the same weights,
 # which gives the same numbers up to the last bit of a float16. The root-mean-
@@ -532,8 +532,8 @@ def cache_features(
     """
     from aerial_search import run as run_module
     from aerial_search.data import checksums
-    from aerial_search.models import backbone
     from aerial_search.models.components import get_device
+    from frozen_head import backbone
 
     if limit and not scratch:
         raise CacheError("--limit builds a partial cache; use it with --scratch only")
@@ -634,8 +634,8 @@ def _load_naflex(model: str) -> Callable[..., Extractor]:
     def load(token_budget: int, pooling: int, transform=None) -> Extractor:
         from transformers import AutoImageProcessor
 
-        from aerial_search.models import backbone
         from aerial_search.models.components import get_device
+        from frozen_head import backbone
 
         spec = backbone.SPECS[model]
         return backbone.NaflexExtractor(

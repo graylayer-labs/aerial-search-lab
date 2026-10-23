@@ -30,15 +30,15 @@ from aerial_search.evaluation.detection import (
     Prediction,
     evaluate_detections,
 )
-from aerial_search.experiments.feature_cache import (
+from frozen_head.feature_cache import (
     CacheError,
     _feature_path,
     cell_boxes,
     read_features,
     read_index,
 )
-from aerial_search.models.head import CentreHead, centre_loss
-from aerial_search.models.thermal_input import DEFAULT_ARM
+from frozen_head.head import CentreHead, centre_loss
+from frozen_head.thermal_input import DEFAULT_ARM
 
 LOG_SIZE_RANGE = (-8.0, 4.0)  # clamp before exp: 0.0003 to 55 cells
 

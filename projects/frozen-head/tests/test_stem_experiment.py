@@ -9,9 +9,9 @@ import torch
 from PIL import Image
 from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
 
-from aerial_search.experiments import stem_experiment as se
-from aerial_search.experiments.feature_cache import CacheError
-from aerial_search.models.backbone import SPECS
+from frozen_head import stem_experiment as se
+from frozen_head.backbone import SPECS
+from frozen_head.feature_cache import CacheError
 
 SPEC = SPECS["siglip2-base-naflex"]
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
@@ -239,7 +239,7 @@ def test_accumulated_micro_batches_equal_the_full_batch_loss_and_gradients():
     """People spread unevenly (0, 2, 10, 20) across four micro-batches."""
     from torch import nn
 
-    from aerial_search.models.head import centre_loss
+    from frozen_head.head import centre_loss
 
     torch.manual_seed(0)
     n, h, w = 4, 6, 8
@@ -295,7 +295,7 @@ def initial_head_states(monkeypatch, module, name):
 def test_the_stem_arms_head_starts_exactly_where_a_plain_head_starts(
     tmp_path, monkeypatch
 ):
-    from aerial_search.models.head import CentreHead
+    from frozen_head.head import CentreHead
 
     seen = initial_head_states(monkeypatch, se, "train")
     cache = setup(tmp_path)
@@ -311,7 +311,7 @@ def test_the_stem_arms_head_starts_exactly_where_a_plain_head_starts(
 
 def arm_a_run(tmp_path: Path, cache: Path, **override) -> Path:
     """A finished arm-A run directory, as run_head leaves it."""
-    from aerial_search.models.head import CentreHead
+    from frozen_head.head import CentreHead
 
     torch.manual_seed(3)
     directory = tmp_path / "armA"

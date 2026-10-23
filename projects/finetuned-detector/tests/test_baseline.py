@@ -205,7 +205,7 @@ def fake_table_run(root, camera, fold, percent, ap25, ap50, method, train_hash="
 
 
 def test_one_table_holds_head_and_baseline_rows_per_fold_with_mean_and_spread(tmp_path):
-    from aerial_search.experiments import head_table as ht
+    from aerial_search.evaluation import head_table as ht
 
     for fold, a, b in (("A", 0.2, 0.4), ("B", 0.4, 0.6)):
         fake_table_run(tmp_path / "head", "rgb", fold, 100, a, a / 2, "head")
@@ -226,7 +226,7 @@ def test_one_table_holds_head_and_baseline_rows_per_fold_with_mean_and_spread(tm
 
 
 def test_the_comparison_refuses_runs_that_saw_different_frames(tmp_path):
-    from aerial_search.experiments import head_table as ht
+    from aerial_search.evaluation import head_table as ht
 
     fake_table_run(tmp_path / "head", "rgb", "A", 1, 0.2, 0.1, "head", train_hash="h1")
     fake_table_run(
@@ -287,7 +287,7 @@ def test_a_normal_run_refuses_a_device_other_than_cpu(tmp_path):
 
 
 def test_the_comparison_refuses_a_missing_cell_or_a_missing_split_file(tmp_path):
-    from aerial_search.experiments import head_table as ht
+    from aerial_search.evaluation import head_table as ht
 
     fake_table_run(tmp_path / "head", "rgb", "A", 1, 0.2, 0.1, "head")
     fake_table_run(tmp_path / "head2", "rgb", "A", 5, 0.2, 0.1, "head")
@@ -302,7 +302,7 @@ def test_the_comparison_refuses_a_missing_cell_or_a_missing_split_file(tmp_path)
 
 
 def test_the_caveat_names_the_validation_frames_the_baseline_used(tmp_path):
-    from aerial_search.experiments import head_table as ht
+    from aerial_search.evaluation import head_table as ht
 
     fake_table_run(tmp_path / "base", "rgb", "A", 1, 0.3, 0.1, "baseline")
     text = ht.compare_caveat({"baseline": ht.collect(tmp_path / "base")})

@@ -6,8 +6,8 @@ import torch
 from PIL import Image
 from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
 
-from aerial_search.models import thermal_input as ti
-from aerial_search.models.backbone import NaflexExtractor, pool2
+from frozen_head import thermal_input as ti
+from frozen_head.backbone import NaflexExtractor, pool2
 
 
 def ramp(low: int = 90, high: int = 130) -> Image.Image:

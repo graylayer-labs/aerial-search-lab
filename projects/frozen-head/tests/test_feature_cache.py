@@ -8,8 +8,8 @@ import torch
 from PIL import Image
 from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
 
-from aerial_search.experiments import feature_cache as fc
-from aerial_search.models.backbone import Extraction, NaflexExtractor, pool2
+from frozen_head import feature_cache as fc
+from frozen_head.backbone import Extraction, NaflexExtractor, pool2
 
 SETTINGS = fc.CacheSettings(
     model="fake",

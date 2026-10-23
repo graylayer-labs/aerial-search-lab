@@ -500,7 +500,7 @@ def test_fetch_directory_prints_the_aws_error_without_a_traceback(
 
 def test_train_head_takes_a_camera_fold_fraction_and_recipe(monkeypatch) -> None:
     from aerial_search import cli
-    from aerial_search.experiments import head_experiment
+    from frozen_head import head_experiment
 
     args = build_parser().parse_args(
         ["train-head", "thermal", "--fold", "220109_Baker", "--percent", "5"]
