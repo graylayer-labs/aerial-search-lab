@@ -1,6 +1,7 @@
 """The frozen head's commands, run through `aerial-search` (#160)."""
 
 import importlib.machinery
+from pathlib import Path
 
 import pytest
 
@@ -9,7 +10,7 @@ from aerial_search.cloud import entry
 from frozen_head import cli as project
 from frozen_head.feature_cache import Summary
 
-COMMANDS = ("cache-features", "check-cache")
+COMMANDS = ("cache-features", "check-cache", "train-head")
 
 
 def test_the_commands_reach_this_project_in_the_job() -> None:
@@ -89,3 +90,31 @@ def test_cache_features_passes_its_flags_and_refuses_clearly(monkeypatch) -> Non
     assert seen["camera"] == "rgb" and seen["input_handling"] == "replicate"
     monkeypatch.setattr(feature_cache, "cache_features", lambda **kw: Summary())
     cli.main(command)
+
+
+def test_train_head_takes_a_camera_fold_fraction_and_recipe(monkeypatch) -> None:
+    from frozen_head import head_experiment
+
+    args = project.build_parser().parse_args(
+        ["train-head", "thermal", "--fold", "220109_Baker", "--percent", "5"]
+    )
+    assert (args.camera, args.fold, args.percent, args.seed) == (
+        "thermal",
+        "220109_Baker",
+        5,
+        7,
+    )
+    assert args.cache == Path("outputs/features/siglip2-base-naflex-1024tok")
+    with pytest.raises(SystemExit):
+        project.build_parser().parse_args(
+            ["train-head", "rgb", "--fold", "x", "--percent", "3"]
+        )
+
+    seen = {}
+    monkeypatch.setattr(
+        head_experiment, "run_head", lambda **kw: seen.update(kw) or {"test": {}}
+    )
+    command = ["train-head", "rgb", "--fold", "F", "--percent", "1", "--steps", "9"]
+    cli.main([*command, "--scratch", "--device", "cpu"])
+    assert seen["recipe"].steps == 9 and seen["scratch"] is True
+    assert seen["percent"] == 1 and seen["camera"] == "rgb"

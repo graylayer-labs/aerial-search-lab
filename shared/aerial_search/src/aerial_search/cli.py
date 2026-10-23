@@ -54,6 +54,11 @@ PROJECT_COMMANDS: dict[str, ProjectCommand] = {
         "run a frozen backbone once over one camera's images and save the "
         "patch features to outputs/features/",
     ),
+    "train-head": ProjectCommand(
+        "frozen_head.cli",
+        "train the person-centre head on cached features: one fold, one "
+        "camera, one label fraction, one seed (docs/detection-head-design.md)",
+    ),
     "check-cache": ProjectCommand(
         "frozen_head.cli",
         "list frames the manifests reference that a feature cache lacks; exit 1 if any",
@@ -285,66 +290,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fold_flag(detect)
     _add_run_flags(detect)
 
-    head = subcommands.add_parser(
-        "train-head",
-        help="train the person-centre head on cached features: one fold, one "
-        "camera, one label fraction, one seed (docs/detection-head-design.md)",
-    )
-    head.add_argument("camera", choices=["rgb", "thermal"])
-    head.add_argument("--percent", type=int, choices=PERCENTS, required=True)
-    head.add_argument("--seed", type=int, default=SEED)
-    head.add_argument(
-        "--cache",
-        type=Path,
-        default=Path("outputs/features/siglip2-base-naflex-1024tok"),
-        help="feature cache directory; only read",
-    )
-    head.add_argument("--data-root", type=Path, default=Path("data/raw/wisard-full"))
-    head.add_argument(
-        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
-    )
-    from frozen_head.head_experiment import Recipe
-    from frozen_head.stem_experiment import StemRecipe
-
-    defaults = Recipe()
-    for name in ("steps", "batch_size", "eval_every", "upsample", "hidden", "top_k"):
-        flag = "--" + name.replace("_", "-")
-        head.add_argument(flag, type=int, default=getattr(defaults, name))
-    head.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
-    head.add_argument("--weight-decay", type=float, default=defaults.weight_decay)
-    head.add_argument("--device", help="default: mps if available, else cpu")
-    head.add_argument(
-        "--input-handling",
-        choices=["replicate", "equalise", "stem"],
-        help="thermal input arm (#68). replicate and equalise are read from "
-        "--cache and this only checks it; stem trains a learned input stem "
-        "before the frozen backbone and takes its geometry from the replicate "
-        "--cache (thermal only; slow: see docs/thermal-input-ablation.md)",
-    )
-    head.add_argument(
-        "--init-head",
-        type=Path,
-        metavar="RUN_DIR",
-        help="warm start (#68): begin from the trained head of this finished "
-        "arm-A run (same fold, percent, camera and seed; it must have saved "
-        "head.pt). Use it with --steps 120 for the stem arm and for its matched "
-        "control, so the two differ only in the stem",
-    )
-    stem_defaults = StemRecipe()
-    for name in ("micro_batch", "eval_batch", "stem_hidden", "validation_stride"):
-        flag = "--" + name.replace("_", "-")
-        head.add_argument(
-            flag, type=int, default=getattr(stem_defaults, name), help="stem arm only"
-        )
-    head.add_argument(
-        "--loss-scale",
-        type=float,
-        default=stem_defaults.loss_scale,
-        help="stem arm only",
-    )
-    _add_fold_flag(head)
-    _add_run_flags(head)
-
     fetch = subcommands.add_parser(
         "sagemaker-fetch",
         help="copy a finished job's run directory from S3 into outputs/ and "
@@ -520,67 +465,6 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(1)
         for line in report.lines:
             print(f"OK   {line}")
-        return
-
-    if args.command == "train-head":
-        import torch
-
-        from aerial_search import run
-        from aerial_search.data import records
-        from aerial_search.models.components import get_device
-        from frozen_head import feature_cache, head_experiment
-
-        names = ("steps", "batch_size", "learning_rate", "weight_decay", "eval_every")
-        names += ("upsample", "hidden", "top_k")
-        recipe = head_experiment.Recipe(**{n: getattr(args, n) for n in names})
-        stem = args.input_handling == "stem"
-        try:
-            if stem:
-                from frozen_head import stem_experiment
-
-                extra = ("micro_batch", "eval_batch", "stem_hidden", "loss_scale")
-                extra += ("validation_stride",)
-                summary = stem_experiment.run_stem_head(
-                    cache_dir=args.cache,
-                    manifests=args.manifests,
-                    data_root=args.data_root,
-                    fold=args.fold,
-                    camera=args.camera,
-                    percent=args.percent,
-                    seed=args.seed,
-                    recipe=stem_experiment.StemRecipe(
-                        **asdict(recipe), **{n: getattr(args, n) for n in extra}
-                    ),
-                    scratch=args.scratch,
-                    run_name=args.run_name,
-                    device=torch.device(args.device) if args.device else get_device(),
-                    init_head=args.init_head,
-                )
-                print(json.dumps(summary, indent=2))
-                return
-            summary = head_experiment.run_head(
-                cache_dir=args.cache,
-                manifests=args.manifests,
-                data_root=args.data_root,
-                fold=args.fold,
-                camera=args.camera,
-                percent=args.percent,
-                seed=args.seed,
-                recipe=recipe,
-                scratch=args.scratch,
-                run_name=args.run_name,
-                device=torch.device(args.device) if args.device else get_device(),
-                input_handling=args.input_handling,
-                init_head=args.init_head,
-            )
-        except (
-            feature_cache.CacheError,
-            records.LeakError,
-            run.ProvenanceError,
-            ValueError,
-        ) as error:
-            raise SystemExit(f"refusing to start: {error}") from error
-        print(json.dumps(summary, indent=2))
         return
 
     if args.command == "sagemaker-fetch":
