@@ -253,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=checksums.committed_path(),
-        help="default: the committed list, under src/aerial_search/data/checksums/",
+        help="default: the committed list, under aerial_search/data/checksums/",
     )
     checksum.add_argument(
         "--force",

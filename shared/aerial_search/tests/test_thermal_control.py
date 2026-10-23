@@ -13,7 +13,7 @@ import pytest
 
 from aerial_search.experiments import feature_cache as fc
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _main_checkout() -> Path:

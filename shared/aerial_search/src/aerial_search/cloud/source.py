@@ -84,7 +84,15 @@ def archive_commit(repo: Path, commit: str) -> tuple[bytes, str]:
     return gzip.compress(result.stdout, mtime=0), digest_files(files)
 
 
-EXPORT = ("uv", "export", "--frozen", "--no-hashes", "--no-dev", "--no-emit-project")
+EXPORT = (
+    "uv",
+    "export",
+    "--frozen",
+    "--no-hashes",
+    "--no-dev",
+    "--all-packages",
+    "--no-emit-workspace",  # pip refuses the members' editable lines as constraints
+)
 
 
 def export_constraints(repo: Path) -> bytes:

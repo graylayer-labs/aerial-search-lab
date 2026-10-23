@@ -43,9 +43,10 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from aerial_search import REPO_ROOT
 from aerial_search.cloud import safe_name, source
 
-CODE_ROOT = Path(__file__).resolve().parents[3]
+CODE_ROOT = REPO_ROOT
 DATASET = Path("/opt/ml/input/data/dataset")
 MANIFESTS = Path("/opt/ml/input/data/manifests")
 CONSTRAINTS = Path("/opt/ml/input/data/constraints/constraints.txt")
@@ -147,9 +148,34 @@ def requirement_name(spec: str) -> str | None:
     return re.sub(r"[-_.]+", "-", match.group(1)).lower()
 
 
+def _members(code_root: Path) -> list[Path]:
+    """The uv workspace members: shared/* and projects/*, not the template."""
+    return [
+        member
+        for pattern in ("shared/*", "projects/*")
+        for member in sorted(code_root.glob(pattern))
+        if member.name != "_template" and (member / "pyproject.toml").is_file()
+    ]
+
+
+def source_dirs(code_root: Path) -> list[Path]:
+    """Each member's `src/`, which the job puts on the path (nothing is installed)."""
+    return [m / "src" for m in _members(code_root) if (m / "src").is_dir()]
+
+
 def _dependencies(code_root: Path) -> list[str]:
-    project = tomllib.loads((code_root / "pyproject.toml").read_text())["project"]
-    return [d for d in project["dependencies"] if requirement_name(d) not in PROVIDED]
+    """Every member's dependencies, less the members themselves and PROVIDED."""
+    projects = [
+        tomllib.loads((m / "pyproject.toml").read_text())["project"]
+        for m in _members(code_root)
+    ]
+    skip = {*PROVIDED, *(requirement_name(p["name"]) for p in projects)}
+    dependencies: list[str] = []
+    for project in projects:
+        for spec in project.get("dependencies", []):
+            if requirement_name(spec) not in skip and spec not in dependencies:
+                dependencies.append(spec)
+    return dependencies
 
 
 def without_provided(constraints: str) -> str:
@@ -208,7 +234,7 @@ def main(environ: Mapping[str, str] | None = None) -> None:
         raise SystemExit(f"refusing to run: {error}") from error
     dependencies = _dependencies(CODE_ROOT)
     _install(dependencies, CONSTRAINTS)
-    sys.path.insert(0, str(CODE_ROOT / "src"))
+    sys.path[:0] = [str(d) for d in source_dirs(CODE_ROOT)]
     from aerial_search import cli, run
 
     name = argv[argv.index("--run-name") + 1]

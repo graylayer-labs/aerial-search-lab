@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-TOOL = Path(__file__).resolve().parents[1] / "tools" / "pairing_contact_sheets.py"
+TOOL = Path(__file__).resolve().parents[3] / "tools" / "pairing_contact_sheets.py"
 
 
 def _tool():

@@ -1,46 +1,39 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# uv workspace root. It is not a package itself: shared code lives in
+# shared/*, and each approach in projects/* is its own package.
 
-[project]
-name = "ssl-aerial-person-detection"
-version = "0.1.0"
-description = "Self-supervised RGB-thermal learning for aerial person detection"
-readme = "README.md"
-requires-python = ">=3.12"
-license = "MIT"
-authors = [{ name = "Eoin McAllister" }]
-dependencies = [
-    "boto3>=1.43.72",
-    "gdown>=6.1.0",
-    "pillow>=12.3.0",
-    "pycocotools>=2.0.11",
-    "torch>=2.13.0",
-    "torchvision>=0.28.0",
-    "transformers>=5.18.0",
-]
+[tool.uv.workspace]
+members = ["shared/*", "projects/*"]
+exclude = ["projects/_template"]
 
-[project.scripts]
-aerial-search = "aerial_search.cli:main"
+[tool.uv.sources]
+aerial-search = { workspace = true }
 
 [dependency-groups]
+# Every workspace member is listed here, so `uv sync --dev` installs them all
+# without --all-packages (the org CI runs plain `uv sync --dev --locked`).
 dev = [
+    "aerial-search",
     "moto>=5.2.2",
     "pytest>=8.3",
     "ruff>=0.11",
     "ty>=0.0.1a16",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/aerial_search"]
-
 [tool.pytest.ini_options]
-addopts = "-q"
-testpaths = ["tests"]
+addopts = "-q --import-mode=importlib"
+testpaths = ["shared", "projects"]
+norecursedirs = ["_template", ".*", "__pycache__"]
+
+[tool.coverage.run]
+# The org CI passes --cov=src, which no longer exists at the root; these
+# packages are measured as well.
+source_pkgs = ["aerial_search"]
 
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+# So workspace packages sort as first-party imports.
+src = ["shared/*/src", "projects/*/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from aerial_search import PACKAGE_DIR
 from aerial_search.cloud import entry, launcher, source
 
 # --- the request ------------------------------------------------------------------
@@ -66,8 +67,8 @@ def job_env(code: Path, manifests: Path, **over: str) -> dict[str, str]:
 @pytest.fixture
 def job(tmp_path: Path) -> dict[str, Path]:
     code = tmp_path / "code"
-    (code / "src" / "aerial_search").mkdir(parents=True)
-    (code / "src" / "aerial_search" / "a.py").write_text("x = 1\n")
+    (code / PACKAGE_DIR).mkdir(parents=True)
+    (code / PACKAGE_DIR / "a.py").write_text("x = 1\n")
     manifests = tmp_path / "in" / "manifests"
     write_manifests(manifests)
     pins = tmp_path / "in" / "constraints" / "constraints.txt"
@@ -106,7 +107,7 @@ def test_the_job_passes_the_baseline_flags_plus_its_own_paths(job) -> None:
 
 def test_modified_code_in_the_job_is_refused(job) -> None:
     env = job_env(job["code"], job["manifests"])
-    (job["code"] / "src" / "aerial_search" / "a.py").write_text("x = 2\n")
+    (job["code"] / PACKAGE_DIR / "a.py").write_text("x = 2\n")
     with pytest.raises(entry.JobRefused, match="source"):
         prepare(job, env)
 
@@ -171,7 +172,7 @@ def test_pins_for_the_containers_own_packages_are_dropped() -> None:
 
 
 def test_the_container_keeps_its_own_torch(job, monkeypatch) -> None:
-    (job["code"] / "pyproject.toml").write_text(
+    (job["code"] / "shared" / "aerial_search" / "pyproject.toml").write_text(
         '[project]\nname = "x"\n'
         'dependencies = ["torch>=2", "TorchVision", "numpy>=2"]\n'
     )
@@ -198,7 +199,7 @@ def test_installed_versions_name_what_is_missing() -> None:
 
 @pytest.fixture
 def in_job(job, tmp_path: Path, monkeypatch) -> dict[str, Any]:
-    (job["code"] / "pyproject.toml").write_text(
+    (job["code"] / "shared" / "aerial_search" / "pyproject.toml").write_text(
         '[project]\nname = "x"\ndependencies = ["pytest>=8"]\n'
     )
     for name, key in [
@@ -215,7 +216,7 @@ def in_job(job, tmp_path: Path, monkeypatch) -> dict[str, Any]:
 
 
 def test_a_refused_job_exits_before_installing_anything(in_job, monkeypatch) -> None:
-    (in_job["code"] / "src" / "aerial_search" / "a.py").write_text("x = 2\n")
+    (in_job["code"] / PACKAGE_DIR / "a.py").write_text("x = 2\n")
 
     def boom(*_: Any) -> None:
         raise AssertionError("installed")
@@ -270,11 +271,17 @@ def test_requirement_names_are_parsed_per_pep_508(spec: str, name: str | None) -
 def test_torch_and_torchvision_from_the_container_are_never_reinstalled(
     tmp_path: Path, monkeypatch
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        "[project]\ndependencies = ["
-        '"torch~=2.13", "TorchVision[x]>=0.28", "torchmetrics>=1", '
-        '"pycocotools>=2.0.11"]\n'
-    )
+    for member, text in {
+        "shared/aerial_search": '"torch~=2.13", "TorchVision[x]>=0.28", '
+        '"torchmetrics>=1", "pycocotools>=2.0.11"',
+        "projects/b": '"aerial-search", "torchmetrics>=1"',
+        "projects/_template": '"never-installed"',
+    }.items():
+        (tmp_path / member).mkdir(parents=True)
+        (tmp_path / member / "pyproject.toml").write_text(
+            f'[project]\nname = "{Path(member).name}"\ndependencies = [{text}]\n'
+        )
+    (tmp_path / "pyproject.toml").write_text("[tool.uv.workspace]\n")
     dependencies = entry._dependencies(tmp_path)
     assert dependencies == ["torchmetrics>=1", "pycocotools>=2.0.11"]
     pins = tmp_path / "constraints.txt"

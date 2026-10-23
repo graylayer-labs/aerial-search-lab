@@ -42,6 +42,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from aerial_search import repo_root
 from aerial_search.data import checksums
 
 MAIN_REF = "refs/remotes/origin/main"
@@ -239,6 +240,11 @@ ATTESTATION_ENV = "AERIAL_SEARCH_ATTESTATION"
 JOB_ENV = "TRAINING_JOB_NAME"  # set by SageMaker in a training job
 
 
+def archive_root(package_dir: Path) -> Path:
+    """The root of the code archive (the repository) holding the package."""
+    return repo_root(package_dir)
+
+
 def _attested_state(
     start: Path, error: GitError, scratch: bool
 ) -> dict[str, Any] | None:
@@ -270,7 +276,7 @@ def _attested_state(
         raise ProvenanceError(
             "the job was launched as a scratch run, so it cannot make a normal run"
         )
-    actual = source.digest_dir(start.parents[1])
+    actual = source.digest_dir(archive_root(start))
     if actual != expected:
         raise ProvenanceError(
             f"the source running here ({actual}) is not the archive of commit "
@@ -301,7 +307,7 @@ def _check_code(scratch: bool, repo: Path | None) -> tuple[Path, dict[str, Any]]
     except GitError as error:
         attested = _attested_state(start, error, scratch)
         if attested is not None:
-            return start.parents[1], attested
+            return archive_root(start), attested
         if not scratch:
             raise
         root = start if repo else Path.cwd().resolve()
