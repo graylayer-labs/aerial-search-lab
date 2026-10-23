@@ -27,13 +27,14 @@ and measure everything on flights the model has never seen.
 
 ## Approaches
 
-Mean over the four held-out site-days at 10% of the training labels, as
-`ap_iou25` / `ap_iou50` (explained under Results so far).
+Mean ± sample sd over the four held-out site-days at 10% of the training
+labels, as `ap_iou25` / `ap_iou50` (explained under Results so far); the
+per-fold scores are in each project's README.
 
 | Project | Approach | Status | RGB | Thermal | Source |
 |---|---|---|---|---|---|
-| [finetuned-detector](projects/finetuned-detector/) | A COCO-pretrained Faster R-CNN fine-tuned on the few labels: the bar | Results in; tiled runs next | 0.163 / 0.046 | 0.256 / 0.137 | [results](docs/supervised-baseline-results.md) |
-| [frozen-head](projects/frozen-head/) | A small head on frozen SigLIP 2 features | Results in; below the bar | 0.113 / 0.006 | 0.129 / 0.007 | [results](docs/supervised-baseline-results.md) |
+| [finetuned-detector](projects/finetuned-detector/) | A COCO-pretrained Faster R-CNN fine-tuned on the few labels: the bar | Results in; tiled runs next | 0.163 ± 0.042 / 0.046 ± 0.011 | 0.256 ± 0.220 / 0.137 ± 0.146 | [results](docs/supervised-baseline-results.md) |
+| [frozen-head](projects/frozen-head/) | A small head on frozen SigLIP 2 features | Results in; below the bar | 0.113 ± 0.075 / 0.006 ± 0.005 | 0.129 ± 0.096 / 0.007 ± 0.005 | [results](docs/supervised-baseline-results.md) |
 
 ## Where it's at (2026-10-23)
 
@@ -46,7 +47,7 @@ Mean over the four held-out site-days at 10% of the training labels, as
   tiles, and a stopped run resumes. No tiled score yet.
 - **Done:** the repo is reshaped into a lab of approaches that share one
   evaluation ([#160](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/160)).
-- **Doing:** the first SageMaker spot job ([#127](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/127)).
+- **Doing:** waiting on AWS to grant a spot GPU quota for the first SageMaker job ([#127](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/127)).
 - **Next:** cloud runs of the tiled detector ([#96](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/96)), then adapting the model with unlabelled footage.
 
 The dated log is [docs/progress.md](docs/progress.md).
