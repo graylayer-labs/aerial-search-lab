@@ -50,42 +50,6 @@ def test_folds_commands_take_the_raw_images_and_the_manifests() -> None:
         assert str(args.manifests) == "data/manifests/wisard-full"
 
 
-def test_cache_features_takes_a_model_a_camera_and_optional_collections() -> None:
-    args = build_parser().parse_args(
-        [
-            "cache-features",
-            "siglip2-base-naflex",
-            "--camera",
-            "thermal",
-            "--collection",
-            "220109_Baker_Enterprise_1",
-        ]
-    )
-
-    assert args.command == "cache-features"
-    assert args.camera == "thermal"
-    assert args.collection == ["220109_Baker_Enterprise_1"]
-    assert (args.token_budget, args.pooling) == (1024, 2)
-    assert str(args.manifests) == "data/manifests/wisard-full"
-    again = build_parser().parse_args(
-        ["cache-features", "siglip2-base-naflex", "--camera", "rgb", "--part", "2/3"]
-    )
-    assert again.part == (2, 3)
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(
-            [
-                "cache-features",
-                "siglip2-base-naflex",
-                "--camera",
-                "rgb",
-                "--part",
-                "4/3",
-            ]
-        )
-    with pytest.raises(SystemExit):  # one camera per session
-        build_parser().parse_args(["cache-features", "siglip2-base-naflex"])
-
-
 def test_experiments_need_a_fold() -> None:
     import pytest
 

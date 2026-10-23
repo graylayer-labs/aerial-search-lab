@@ -5,6 +5,7 @@ import json
 import pytest
 
 from aerial_search import cli
+from frozen_head import cli as project
 
 
 def write_arm_run(root, arm, ap25) -> None:
@@ -40,8 +41,8 @@ def test_head_table_ablation_puts_each_arm_directory_in_one_table(
 def test_cache_features_takes_the_thermal_input_arm() -> None:
     base = ["cache-features", "siglip2-base-naflex", "--camera", "thermal"]
 
-    assert cli.build_parser().parse_args(base).thermal_input == "replicate"
-    args = cli.build_parser().parse_args([*base, "--thermal-input", "equalise"])
+    assert project.build_parser().parse_args(base).thermal_input == "replicate"
+    args = project.build_parser().parse_args([*base, "--thermal-input", "equalise"])
     assert args.thermal_input == "equalise"
 
 
