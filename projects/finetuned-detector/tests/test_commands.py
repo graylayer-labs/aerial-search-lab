@@ -40,8 +40,10 @@ def test_train_baseline_runs_the_project_experiment(monkeypatch, capsys) -> None
 def test_the_command_line_refuses_expected_hours_that_are_not_positive(
     hours: str,
 ) -> None:
-    with pytest.raises(SystemExit):
-        cli.main([*LAUNCH, "--expected-hours", hours])
+    # parse only: a parse that let the value through would go on to AWS calls
+    with pytest.raises(SystemExit) as refused:
+        project.build_parser().parse_args([*LAUNCH, "--expected-hours", hours])
+    assert refused.value.code == 2
 
 
 def test_sagemaker_train_launches_with_the_forwarded_flags(monkeypatch, capsys) -> None:
