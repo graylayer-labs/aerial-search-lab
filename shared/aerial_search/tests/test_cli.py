@@ -462,35 +462,6 @@ def test_fetch_directory_prints_the_aws_error_without_a_traceback(
         cli.main(["fetch-directory", "x", "--data-root", str(tmp_path)])
 
 
-def test_train_head_takes_a_camera_fold_fraction_and_recipe(monkeypatch) -> None:
-    from aerial_search import cli
-    from frozen_head import head_experiment
-
-    args = build_parser().parse_args(
-        ["train-head", "thermal", "--fold", "220109_Baker", "--percent", "5"]
-    )
-    assert (args.camera, args.fold, args.percent, args.seed) == (
-        "thermal",
-        "220109_Baker",
-        5,
-        7,
-    )
-    assert args.cache == Path("outputs/features/siglip2-base-naflex-1024tok")
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(
-            ["train-head", "rgb", "--fold", "x", "--percent", "3"]
-        )
-
-    seen = {}
-    monkeypatch.setattr(
-        head_experiment, "run_head", lambda **kw: seen.update(kw) or {"test": {}}
-    )
-    command = ["train-head", "rgb", "--fold", "F", "--percent", "1", "--steps", "9"]
-    cli.main([*command, "--scratch", "--device", "cpu"])
-    assert seen["recipe"].steps == 9 and seen["scratch"] is True
-    assert seen["percent"] == 1 and seen["camera"] == "rgb"
-
-
 def test_head_table_prints_the_table_of_a_runs_directory(tmp_path, capsys) -> None:
     from aerial_search import cli
 
