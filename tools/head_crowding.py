@@ -20,8 +20,8 @@ import json
 from pathlib import Path
 
 from aerial_search.data.folds import TEST, view_dir
-from aerial_search.experiments.feature_cache import read_index
-from aerial_search.experiments.head_experiment import (
+from frozen_head.feature_cache import read_index
+from frozen_head.head_experiment import (
     Geometry,
     Recipe,
     crowding,

@@ -14,12 +14,14 @@ resolution-markers = [
 members = [
     "aerial-search",
     "finetuned-detector",
+    "frozen-head",
 ]
 
 [manifest.dependency-groups]
 dev = [
     { name = "aerial-search", editable = "shared/aerial_search" },
     { name = "finetuned-detector", editable = "projects/finetuned-detector" },
+    { name = "frozen-head", editable = "projects/frozen-head" },
     { name = "moto", specifier = ">=5.2.2" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.11" },
@@ -37,7 +39,6 @@ dependencies = [
     { name = "pycocotools" },
     { name = "torch" },
     { name = "torchvision" },
-    { name = "transformers" },
 ]
 
 [package.metadata]
@@ -48,7 +49,6 @@ requires-dist = [
     { name = "pycocotools", specifier = ">=2.0.11" },
     { name = "torch", specifier = ">=2.13.0" },
     { name = "torchvision", specifier = ">=0.28.0" },
-    { name = "transformers", specifier = ">=5.18.0" },
 ]
 
 [[package]]
@@ -501,6 +501,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "aerial-search", editable = "shared/aerial_search" }]
+
+[[package]]
+name = "frozen-head"
+version = "0.1.0"
+source = { editable = "projects/frozen-head" }
+dependencies = [
+    { name = "aerial-search" },
+    { name = "transformers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aerial-search", editable = "shared/aerial_search" },
+    { name = "transformers", specifier = ">=5.18.0" },
+]
 
 [[package]]
 name = "fsspec"

@@ -352,8 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
     head.add_argument(
         "--manifests", type=Path, default=Path("data/manifests/wisard-full")
     )
-    from aerial_search.experiments.head_experiment import Recipe
-    from aerial_search.experiments.stem_experiment import StemRecipe
+    from frozen_head.head_experiment import Recipe
+    from frozen_head.stem_experiment import StemRecipe
 
     defaults = Recipe()
     for name in ("steps", "batch_size", "eval_every", "upsample", "hidden", "top_k"):
@@ -572,7 +572,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "check-cache":
-        from aerial_search.experiments import feature_cache
+        from frozen_head import feature_cache
 
         cameras = (args.camera,) if args.camera else ("rgb", "thermal")
         missing = feature_cache.missing_frames(args.cache, args.manifests, cameras)
@@ -586,7 +586,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "cache-features":
         from aerial_search import run
-        from aerial_search.experiments import feature_cache
+        from frozen_head import feature_cache
 
         try:
             summary = feature_cache.cache_features(
@@ -614,8 +614,8 @@ def main(argv: list[str] | None = None) -> None:
 
         from aerial_search import run
         from aerial_search.data import records
-        from aerial_search.experiments import feature_cache, head_experiment
         from aerial_search.models.components import get_device
+        from frozen_head import feature_cache, head_experiment
 
         names = ("steps", "batch_size", "learning_rate", "weight_decay", "eval_every")
         names += ("upsample", "hidden", "top_k")
@@ -623,7 +623,7 @@ def main(argv: list[str] | None = None) -> None:
         stem = args.input_handling == "stem"
         try:
             if stem:
-                from aerial_search.experiments import stem_experiment
+                from frozen_head import stem_experiment
 
                 extra = ("micro_batch", "eval_batch", "stem_hidden", "loss_scale")
                 extra += ("validation_stride",)
@@ -708,7 +708,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "compare-table":
-        from aerial_search.experiments import head_table
+        from aerial_search.evaluation import head_table
 
         try:
             runs = {}
@@ -727,7 +727,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "head-table":
-        from aerial_search.experiments import head_table
+        from aerial_search.evaluation import head_table
 
         try:
             if args.ablation:

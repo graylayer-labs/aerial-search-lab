@@ -19,7 +19,7 @@ import torch
 from PIL import Image, ImageOps
 from torch import Tensor, nn
 
-from aerial_search.models.backbone import pool2
+from frozen_head.backbone import pool2
 
 ARMS = ("replicate", "equalise", "stem")
 CACHED_ARMS = ("replicate", "equalise")

@@ -44,8 +44,10 @@ from aerial_search.evaluation.detection import (
     Prediction,
     evaluate_detections,
 )
-from aerial_search.experiments.feature_cache import CacheError
-from aerial_search.experiments.head_experiment import (
+from frozen_head.backbone import NaflexExtractor, Prepared
+from frozen_head.feature_cache import CacheError
+from frozen_head.head import CentreHead, centre_loss
+from frozen_head.head_experiment import (
     Geometry,
     Recipe,
     Split,
@@ -55,9 +57,7 @@ from aerial_search.experiments.head_experiment import (
     decode,
     load_warm_start,
 )
-from aerial_search.models.backbone import NaflexExtractor, Prepared
-from aerial_search.models.head import CentreHead, centre_loss
-from aerial_search.models.thermal_input import DEFAULT_ARM, StemBackbone, ThermalStem
+from frozen_head.thermal_input import DEFAULT_ARM, StemBackbone, ThermalStem
 
 ARM = "stem"
 WORKERS = 3
@@ -340,7 +340,7 @@ def default_run_name(
 def _load_backbone(model_name: str, device: torch.device):
     from transformers import AutoImageProcessor
 
-    from aerial_search.models import backbone
+    from frozen_head import backbone
 
     spec = backbone.SPECS[model_name]
     processor = AutoImageProcessor.from_pretrained(spec.repo, revision=spec.revision)
@@ -380,7 +380,7 @@ def run_stem_head(
     """
     from aerial_search import run as run_module
     from aerial_search.data import checksums
-    from aerial_search.models import backbone
+    from frozen_head import backbone
 
     if camera != "thermal":
         raise ValueError("the learned input stem is for the thermal camera only")

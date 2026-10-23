@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from aerial_search.data import records as rc
 from aerial_search.data import tiling
-from aerial_search.experiments import head_experiment as he
 from finetuned_detector import experiment as be
 
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
@@ -54,7 +54,7 @@ def test_training_tiles_hold_clipped_boxes_and_a_share_of_empty_tiles(tmp_path):
     write_images(tmp_path, [record])
     tiles = be.TiledTrainSet([record], tmp_path, SPEC, seed=0)
     grid = tiling.tile_grid(64, 48, SPEC.size, SPEC.overlap)
-    truth = he.record_boxes(record)
+    truth = rc.record_boxes(record)
     n_positive = sum(len(tiling.boxes_in_tile(truth, t, 0.5)[1]) > 0 for t in grid)
     assert 0 < n_positive < len(grid)
     seen = 0
@@ -100,7 +100,7 @@ def test_tiled_prediction_counts_a_person_in_an_overlap_once_in_source_pixels(
     # 10 x 8 px person at x 20..30, y 14..22: seen whole by several tiles.
     record = rec(FOLD, "x0", [box(25 / 64, 18 / 48, 10 / 64, 8 / 48)])
     write_images(tmp_path, [record])
-    truth = he.record_boxes(record)
+    truth = rc.record_boxes(record)
     grid = tiling.tile_grid(64, 48, SPEC.size, SPEC.overlap)
     assert sum(len(tiling.boxes_in_tile(truth, t, 1.0)[1]) > 0 for t in grid) >= 2
     frames = be.TiledFrames([record], tmp_path, SPEC)
@@ -198,7 +198,7 @@ def test_boxes_labelled_in_no_tile_are_counted_and_slivers_are_not_negatives(tmp
     empties = 0
     for r, tile, local in tiles.tiles:
         if len(local) == 0:  # an empty negative: it must not touch any box
-            truth = he.record_boxes(tiles.records[r])
+            truth = rc.record_boxes(tiles.records[r])
             assert not tiling.touches_box(truth, tile)
             empties += 1
     assert empties == 2  # only the corner frame has clear tiles; ratio 2.0 x 1
@@ -210,7 +210,7 @@ def test_empty_tiles_are_sampled_from_the_clear_ones_up_to_the_ratio(tmp_path):
     spec = be.TileSpec((32, 24), 16, min_visible=0.5, empty_ratio=2.0)
     tiles = be.TiledTrainSet([record], tmp_path, spec, seed=0)
     grid = tiling.tile_grid(64, 48, spec.size, spec.overlap)
-    truth = he.record_boxes(record)
+    truth = rc.record_boxes(record)
     n_positive = sum(len(tiling.boxes_in_tile(truth, t, 0.5)[1]) > 0 for t in grid)
     clear = sum(not tiling.touches_box(truth, t) for t in grid)
     assert n_positive >= 1 and clear > 2 * n_positive

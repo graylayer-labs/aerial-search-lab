@@ -46,7 +46,7 @@ def test_cache_features_takes_the_thermal_input_arm() -> None:
 
 
 def test_train_head_stem_dispatches_to_the_stem_runner(monkeypatch) -> None:
-    from aerial_search.experiments import stem_experiment
+    from frozen_head import stem_experiment
 
     seen = {}
     monkeypatch.setattr(

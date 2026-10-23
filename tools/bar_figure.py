@@ -1,6 +1,6 @@
 """Draw the off-the-shelf bar figure (#69): head versus fine-tuned detector.
 
-Reads completed, non-scratch runs with `aerial_search.experiments.head_table`
+Reads completed, non-scratch runs with `aerial_search.evaluation.head_table`
 (the same readers as `aerial-search compare-table`), refuses the pair unless
 both methods saw the same frames, and writes one hand-made SVG with a panel
 per camera: test `ap_iou25` against label fraction, mean over folds as a line,
@@ -21,7 +21,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from aerial_search.experiments import head_table
+from aerial_search.evaluation import head_table
 
 SERIES = (
     ("head", "frozen SigLIP 2 + head", "#3b6fd8"),

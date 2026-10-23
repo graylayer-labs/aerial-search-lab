@@ -8,8 +8,8 @@ import torch
 from PIL import Image
 from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
 
-from aerial_search.experiments import feature_cache as fc
-from aerial_search.models.backbone import Extraction, NaflexExtractor, pool2
+from frozen_head import feature_cache as fc
+from frozen_head.backbone import Extraction, NaflexExtractor, pool2
 
 SETTINGS = fc.CacheSettings(
     model="fake",
@@ -643,3 +643,24 @@ def test_an_equalised_thermal_cache_lives_in_its_own_directory_and_records_why(
     record = json.loads((cache / "runs/s1/run.json").read_text())
     assert "equalis" in record["config"]["preprocessing"]
     assert seen == [fc.input_transform("equalise", "thermal")]
+
+
+def test_the_default_loader_builds_the_pinned_backbone(monkeypatch) -> None:
+    # No download: the loader's wiring, not the weights.
+    from frozen_head import backbone
+
+    seen: dict = {}
+    model = next(iter(backbone.SPECS))
+    spec = backbone.SPECS[model]
+    monkeypatch.setattr(backbone, "load", lambda s, device: seen.setdefault("spec", s))
+    monkeypatch.setattr(
+        "transformers.AutoImageProcessor.from_pretrained",
+        lambda repo, revision: seen.setdefault("processor", (repo, revision)),
+    )
+    monkeypatch.setattr(
+        backbone, "NaflexExtractor", lambda *args: seen.setdefault("args", args)
+    )
+    fc._load_naflex(model)(1024, 2)
+    assert seen["spec"] is spec
+    assert seen["processor"] == (spec.repo, spec.revision)
+    assert seen["args"][2:] == (1024, 2, None)
