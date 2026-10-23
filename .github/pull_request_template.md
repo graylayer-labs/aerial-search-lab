@@ -20,8 +20,8 @@ $ uv run pytest -rx
 ## Review
 
 <!-- Who reviewed this: the `reviewer` agent, or the lead reading the diff.
-     Changes to logic under src/, to an experiment, or to a metric need the
-     `reviewer` agent. -->
+     Changes to logic under any src/ (shared or a project), to an
+     experiment, or to a metric need the `reviewer` agent. -->
 
 ## How to test
 

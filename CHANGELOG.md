@@ -4,6 +4,19 @@ Key changes to the project, newest first. Routine fixes and wording changes
 are left out; the git log has those. Entries are grouped by epic and date, and
 each links to the issue or pull request that holds the detail.
 
+## Across epics
+
+### 2026-10-23
+
+**Change of method / layout**
+- The repo is now a lab of approaches that share one evaluation: a uv
+  workspace with the data, site-day folds, frame selection, metrics and run
+  provenance in `shared/` (package `aerial_search`, imports unchanged), and
+  one package per approach in `projects/`, each with its own README:
+  `finetuned-detector` (the bar) and `frozen-head`. A new approach starts
+  from `projects/_template`. Commands keep their names, in a cloud job too.
+  ([#160](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/160))
+
 ## Epic: Domain adaptation (in progress)
 
 ### 2026-10-15
