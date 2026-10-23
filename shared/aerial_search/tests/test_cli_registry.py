@@ -49,11 +49,24 @@ def test_project_commands_are_listed_in_the_help(fake, capsys) -> None:
 
 
 def test_a_project_module_is_imported_only_when_its_command_runs(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
+    (tmp_path / "lazy_probe.py").write_text("def main(argv):\n    return argv\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "lazy_probe", raising=False)
+    monkeypatch.setitem(
+        cli.PROJECT_COMMANDS, "train-probe", cli.ProjectCommand("lazy_probe", "")
+    )
+    cli.build_parser()
+    assert "lazy_probe" not in sys.modules
+    cli.main(["train-probe", "--x"])
+    assert "lazy_probe" in sys.modules
+    monkeypatch.delitem(sys.modules, "lazy_probe")
+
+
+def test_a_missing_project_module_is_a_clear_error(monkeypatch) -> None:
     monkeypatch.setitem(
         cli.PROJECT_COMMANDS, "train-gone", cli.ProjectCommand("no_such_project", "")
     )
-    cli.build_parser()
     with pytest.raises(SystemExit, match="no_such_project"):
         cli.main(["train-gone"])
