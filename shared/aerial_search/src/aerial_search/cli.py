@@ -49,6 +49,15 @@ class ProjectCommand:
 # table is static, not entry points, because a SageMaker job puts the code on
 # sys.path without installing it, so no entry point metadata exists there.
 PROJECT_COMMANDS: dict[str, ProjectCommand] = {
+    "cache-features": ProjectCommand(
+        "frozen_head.cli",
+        "run a frozen backbone once over one camera's images and save the "
+        "patch features to outputs/features/",
+    ),
+    "check-cache": ProjectCommand(
+        "frozen_head.cli",
+        "list frames the manifests reference that a feature cache lacks; exit 1 if any",
+    ),
     "train-baseline": ProjectCommand(
         "finetuned_detector.cli",
         "fine-tune a COCO-pretrained torchvision detector on the same labels as "
@@ -251,64 +260,6 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("source", type=Path, help="raw images, for image sizes")
         command.add_argument("manifests", type=Path, help="output of prepare")
     folds.add_argument("--seed", type=int, default=FOLD_SEED)
-
-    cache = subcommands.add_parser(
-        "cache-features",
-        help="run a frozen backbone once over one camera's images and save the "
-        "patch features to outputs/features/",
-    )
-    check_cache = subcommands.add_parser(
-        "check-cache",
-        help="list frames the manifests reference that a feature cache lacks; "
-        "exit 1 if any",
-    )
-    check_cache.add_argument("cache", type=Path, help="a features/<model>-<n>tok dir")
-    check_cache.add_argument("manifests", type=Path, help="output of prepare")
-    check_cache.add_argument(
-        "--camera",
-        choices=["rgb", "thermal"],
-        help="check this camera only, for a cache that holds one (default: both)",
-    )
-
-    cache.add_argument("model", choices=["siglip2-base-naflex"])
-    cache.add_argument("--camera", choices=["rgb", "thermal"], required=True)
-    cache.add_argument(
-        "--collection",
-        action="append",
-        metavar="ID",
-        help="only this collection (repeat for several), to keep one session "
-        "under 30 minutes; default: all",
-    )
-    cache.add_argument(
-        "--part",
-        type=_part,
-        metavar="K/N",
-        help="the Kth of N contiguous chunks of the selected images, for example "
-        "1/2 and 2/2 to halve a session",
-    )
-    cache.add_argument("--token-budget", type=int, default=1024)
-    cache.add_argument(
-        "--thermal-input",
-        choices=["replicate", "equalise"],
-        default="replicate",
-        help="how thermal frames reach the backbone (#68); equalise builds a "
-        "separate cache, outputs/features/<model>-<n>tok-equalise; thermal only",
-    )
-    cache.add_argument(
-        "--pooling", type=int, default=2, help="k of a k x k average pool; 1 is none"
-    )
-    cache.add_argument(
-        "--verify",
-        type=int,
-        default=8,
-        help="finished images to recompute and compare when resuming",
-    )
-    cache.add_argument("--limit", type=int, help="first N images only; needs --scratch")
-    cache.add_argument("--data-root", type=Path, default=Path("data/raw/wisard-full"))
-    cache.add_argument(
-        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
-    )
-    _add_run_flags(cache)
 
     train = subcommands.add_parser("train-ssl", help="run the paired SSL experiment")
     train.add_argument("--data-root", type=Path, default=Path("data/raw/wisard-sample"))
@@ -569,44 +520,6 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(1)
         for line in report.lines:
             print(f"OK   {line}")
-        return
-
-    if args.command == "check-cache":
-        from frozen_head import feature_cache
-
-        cameras = (args.camera,) if args.camera else ("rgb", "thermal")
-        missing = feature_cache.missing_frames(args.cache, args.manifests, cameras)
-        for camera, paths in missing.items():
-            print(f"{camera}: {len(paths)} missing")
-            for path in paths:
-                print(f"  {path}")
-        if any(missing.values()):
-            raise SystemExit(1)
-        return
-
-    if args.command == "cache-features":
-        from aerial_search import run
-        from frozen_head import feature_cache
-
-        try:
-            summary = feature_cache.cache_features(
-                model=args.model,
-                camera=args.camera,
-                data_root=args.data_root,
-                manifests=args.manifests,
-                collections=args.collection,
-                limit=args.limit,
-                part=args.part,
-                token_budget=args.token_budget,
-                pooling=args.pooling,
-                verify=args.verify,
-                scratch=args.scratch,
-                session=args.run_name,
-                input_handling=args.thermal_input,
-            )
-        except (feature_cache.CacheError, ValueError, run.ProvenanceError) as error:
-            raise SystemExit(f"refusing to cache: {error}") from error
-        print(json.dumps(asdict(summary), indent=2))
         return
 
     if args.command == "train-head":
