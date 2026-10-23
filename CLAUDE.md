@@ -1,4 +1,4 @@
-# ssl-aerial-person-detection
+# aerial-search-lab
 
 Read the intent first. It explains why the project exists and how decisions are
 made, and it overrides anything below that conflicts with it.
@@ -73,7 +73,7 @@ child.
 
 - Board: https://github.com/orgs/graylayer-labs/projects/1 (project number 1,
   owner `graylayer-labs`). It is public.
-- Issues: https://github.com/graylayer-labs/ssl-aerial-person-detection/issues
+- Issues: https://github.com/graylayer-labs/aerial-search-lab/issues
 - Status lives on the board only: Todo, In Progress, Done.
 - **Epics** are parent issues labelled `epic`, one per milestone. Work that
   belongs to one milestone is a sub-issue of its epic. The epics in order are
@@ -96,8 +96,8 @@ child.
 
 ```bash
 # attach issue <child> to epic <parent> (needs the child's id, not its number)
-CHILD_ID=$(gh api repos/graylayer-labs/ssl-aerial-person-detection/issues/<child> --jq .id)
-gh api -X POST repos/graylayer-labs/ssl-aerial-person-detection/issues/<parent>/sub_issues \
+CHILD_ID=$(gh api repos/graylayer-labs/aerial-search-lab/issues/<child> --jq .id)
+gh api -X POST repos/graylayer-labs/aerial-search-lab/issues/<parent>/sub_issues \
   -F sub_issue_id=$CHILD_ID
 ```
 
@@ -374,6 +374,9 @@ uv run aerial-search checksum data/raw/wisard-full --force   # re-pin; only if t
   `ssl-aerial-person-detection-agent`, which can list, read, and write objects
   in the project bucket and nothing else. It cannot delete objects or
   versions, or change bucket settings.
+- The AWS names (bucket, roles, the `project` tag) keep the repo's old name,
+  `ssl-aerial-person-detection`, on purpose: renaming them would mean new
+  resources and a data copy for no gain (#160).
 - Do not name another profile. The owner's own sign-in has administrator
   access and is not for agents.
 - A fresh machine needs the profile added to `~/.aws/config`: `role_arn` of

@@ -15,7 +15,9 @@ each links to the issue or pull request that holds the detail.
   one package per approach in `projects/`, each with its own README:
   `finetuned-detector` (the bar) and `frozen-head`. A new approach starts
   from `projects/_template`. Commands keep their names, in a cloud job too.
-  ([#160](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/160))
+  The repo is renamed from `ssl-aerial-person-detection` to
+  `aerial-search-lab`; old links redirect.
+  ([#160](https://github.com/graylayer-labs/aerial-search-lab/issues/160))
 
 ## Epic: Domain adaptation (in progress)
 

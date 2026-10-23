@@ -1,6 +1,6 @@
 # Aerial person detection for search and rescue
 
-[![ci](https://github.com/graylayer-labs/ssl-aerial-person-detection/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graylayer-labs/ssl-aerial-person-detection/actions/workflows/ci.yml)
+[![ci](https://github.com/graylayer-labs/aerial-search-lab/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graylayer-labs/aerial-search-lab/actions/workflows/ci.yml)
 
 A personal research lab, run like a thesis: one question, several
 approaches, one honest evaluation. The question is how to find people in
@@ -46,9 +46,9 @@ per-fold scores are in each project's README.
 - **Done:** the detector can read frames at full resolution by cutting them into
   tiles, and a stopped run resumes. No tiled score yet.
 - **Done:** the repo is reshaped into a lab of approaches that share one
-  evaluation ([#160](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/160)).
-- **Doing:** waiting on AWS to grant a spot GPU quota for the first SageMaker job ([#127](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/127)).
-- **Next:** cloud runs of the tiled detector ([#96](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/96)), then adapting the model with unlabelled footage.
+  evaluation ([#160](https://github.com/graylayer-labs/aerial-search-lab/issues/160)).
+- **Doing:** waiting on AWS to grant a spot GPU quota for the first SageMaker job ([#127](https://github.com/graylayer-labs/aerial-search-lab/issues/127)).
+- **Next:** cloud runs of the tiled detector ([#96](https://github.com/graylayer-labs/aerial-search-lab/issues/96)), then adapting the model with unlabelled footage.
 
 The dated log is [docs/progress.md](docs/progress.md).
 
@@ -128,7 +128,7 @@ and register its commands. The steps are in [projects/README.md](projects/README
 ## How this project is run
 
 Claude agents do the engineering and the owner directs. Work is planned as
-[epics and issues](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues?q=is%3Aissue+label%3Aepic),
+[epics and issues](https://github.com/graylayer-labs/aerial-search-lab/issues?q=is%3Aissue+label%3Aepic),
 each written so that an agent with no prior context can pick it up.
 
 ## Licence
