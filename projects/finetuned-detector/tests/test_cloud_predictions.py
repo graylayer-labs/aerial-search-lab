@@ -11,7 +11,7 @@ import pytest
 def test_predictions_next_to_a_mid_training_checkpoint_are_set_aside_not_fatal(
     tmp_path: Path,
 ) -> None:
-    from aerial_search.experiments.baseline_experiment import Checkpoints
+    from finetuned_detector.experiment import Checkpoints
 
     identity = {"seed": 7}
     Checkpoints(tmp_path, identity, 10).save(phase="training", step=5)
@@ -25,7 +25,7 @@ def test_predictions_next_to_a_mid_training_checkpoint_are_set_aside_not_fatal(
 def test_the_trained_checkpoint_is_rewritten_after_the_first_prediction(
     tmp_path: Path,
 ) -> None:
-    from aerial_search.experiments.baseline_experiment import Checkpoints
+    from finetuned_detector.experiment import Checkpoints
 
     saver = Checkpoints(tmp_path, {"seed": 7}, 10)
     saver.save(phase="trained", step=5)
@@ -38,7 +38,7 @@ def test_the_trained_checkpoint_is_rewritten_after_the_first_prediction(
 def trained(directory: Path, weight: float) -> Any:
     import torch
 
-    from aerial_search.experiments.baseline_experiment import Checkpoints
+    from finetuned_detector.experiment import Checkpoints
 
     saver = Checkpoints(directory, {"seed": 7}, 10)
     saver.save(phase="trained", step=5, model={"w": torch.full((2,), weight)})
@@ -57,7 +57,7 @@ def test_another_models_predictions_beside_a_trained_checkpoint_are_set_aside(
     tmp_path: Path,
 ) -> None:
     from aerial_search.evaluation import predictions as pr
-    from aerial_search.experiments.baseline_experiment import Checkpoints
+    from finetuned_detector.experiment import Checkpoints
 
     other = trained(tmp_path / "other", 1.0)
     predicted(other)
@@ -80,7 +80,7 @@ def test_another_models_predictions_beside_a_trained_checkpoint_are_set_aside(
 def test_predictions_with_no_model_id_beside_a_trained_checkpoint_are_set_aside(
     tmp_path: Path,
 ) -> None:
-    from aerial_search.experiments.baseline_experiment import Checkpoints
+    from finetuned_detector.experiment import Checkpoints
 
     mine = trained(tmp_path, 2.0)
     mine.predictions.write_text(
@@ -94,7 +94,7 @@ def test_predictions_with_no_model_id_beside_a_trained_checkpoint_are_set_aside(
 
 def test_the_same_models_predictions_resume(tmp_path: Path) -> None:
     from aerial_search.evaluation import predictions as pr
-    from aerial_search.experiments.baseline_experiment import Checkpoints
+    from finetuned_detector.experiment import Checkpoints
 
     mine = trained(tmp_path, 2.0)
     predicted(mine)

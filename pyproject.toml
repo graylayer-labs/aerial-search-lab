@@ -7,12 +7,14 @@ exclude = ["projects/_template"]
 
 [tool.uv.sources]
 aerial-search = { workspace = true }
+finetuned-detector = { workspace = true }
 
 [dependency-groups]
 # Every workspace member is listed here, so `uv sync --dev` installs them all
 # without --all-packages (the org CI runs plain `uv sync --dev --locked`).
 dev = [
     "aerial-search",
+    "finetuned-detector",
     "moto>=5.2.2",
     "pytest>=8.3",
     "ruff>=0.11",
@@ -27,7 +29,7 @@ norecursedirs = ["_template", ".*", "__pycache__"]
 [tool.coverage.run]
 # The org CI passes --cov=src, which no longer exists at the root; these
 # packages are measured as well.
-source_pkgs = ["aerial_search"]
+source_pkgs = ["aerial_search", "finetuned_detector"]
 
 [tool.ruff]
 line-length = 88

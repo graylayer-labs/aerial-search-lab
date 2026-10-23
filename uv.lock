@@ -13,11 +13,13 @@ resolution-markers = [
 [manifest]
 members = [
     "aerial-search",
+    "finetuned-detector",
 ]
 
 [manifest.dependency-groups]
 dev = [
     { name = "aerial-search", editable = "shared/aerial_search" },
+    { name = "finetuned-detector", editable = "projects/finetuned-detector" },
     { name = "moto", specifier = ">=5.2.2" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.11" },
@@ -488,6 +490,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/f6/57/3ba6e6cb097f85b85
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/e8/72f8cef9fdfeffe06213fe8508039396ee48daa0e3259457ed766173bfd6/filelock-3.32.2-py3-none-any.whl", hash = "sha256:87dd94cf281e586d135fa51132b8e3d9a598b316e90377a288663c9321036c82", size = 98830, upload-time = "2026-07-29T22:46:03.52Z" },
 ]
+
+[[package]]
+name = "finetuned-detector"
+version = "0.1.0"
+source = { editable = "projects/finetuned-detector" }
+dependencies = [
+    { name = "aerial-search" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aerial-search", editable = "shared/aerial_search" }]
 
 [[package]]
 name = "fsspec"

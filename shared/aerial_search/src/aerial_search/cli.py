@@ -206,7 +206,7 @@ def _add_baseline_flags(base: argparse.ArgumentParser, *, cloud: bool) -> None:
     base.add_argument(
         "--manifests", type=Path, default=Path("data/manifests/wisard-full")
     )
-    from aerial_search.experiments.baseline_experiment import (
+    from finetuned_detector.experiment import (
         ARCHITECTURES,
         INPUTS,
         BaselineRecipe,
@@ -254,7 +254,7 @@ def _add_baseline_flags(base: argparse.ArgumentParser, *, cloud: bool) -> None:
             "attempt is resumed in a new run directory; another run's is refused. "
             "On SageMaker: /opt/ml/checkpoints (#112)",
         )
-    from aerial_search.experiments.baseline_experiment import CHECKPOINT_EVERY
+    from finetuned_detector.experiment import CHECKPOINT_EVERY
 
     base.add_argument(
         "--checkpoint-every",
@@ -819,7 +819,7 @@ def main(argv: list[str] | None = None) -> None:
         import torch
 
         from aerial_search import run
-        from aerial_search.experiments import baseline_experiment
+        from finetuned_detector import experiment as baseline_experiment
 
         names = ("arch", "input", "steps", "batch_size", "learning_rate")
         names += ("eval_every", "val_frames", "top_k", "workers")
@@ -851,7 +851,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sagemaker-train":
         from aerial_search import run
         from aerial_search.cloud import cost, launcher
-        from aerial_search.experiments import baseline_experiment
+        from finetuned_detector import experiment as baseline_experiment
 
         recipe = baseline_experiment.BaselineRecipe(
             arch=args.arch, input=args.input, tile_overlap=args.tile_overlap

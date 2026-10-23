@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 
 from aerial_search.data import records as rc
-from aerial_search.experiments import baseline_experiment as be
+from finetuned_detector import experiment as be
 
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
 MANIFESTS = Path("data/manifests/wisard-full")
