@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "finetuned-detector"
+version = "0.1.0"
+description = "The bar: a COCO-pretrained torchvision detector fine-tuned on few labels"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Eoin McAllister" }]
+dependencies = ["aerial-search"]
+
+[tool.uv.sources]
+aerial-search = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finetuned_detector"]
