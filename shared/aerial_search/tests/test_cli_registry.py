@@ -37,9 +37,10 @@ def fake(monkeypatch) -> list[list[str]]:
     return seen
 
 
-def test_a_project_command_gets_the_rest_of_the_arguments(fake) -> None:
+def test_a_project_command_gets_its_whole_command_line(fake) -> None:
+    # one project module can serve several commands, as a parser of its own
     cli.main(["train-fake", "--fold", "220109_Baker", "--help"])
-    assert fake == [["--fold", "220109_Baker", "--help"]]
+    assert fake == [["train-fake", "--fold", "220109_Baker", "--help"]]
 
 
 def test_project_commands_are_listed_in_the_help(fake, capsys) -> None:
