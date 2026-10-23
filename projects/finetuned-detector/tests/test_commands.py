@@ -1,6 +1,7 @@
 """The fine-tuned detector's commands, run through `aerial-search` (#160)."""
 
-import importlib.machinery
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,12 +15,24 @@ from finetuned_detector import experiment
 LAUNCH = ["sagemaker-train", "rgb", "--percent", "10", "--fold", "f"]
 
 
-def test_both_commands_reach_this_project_in_the_job() -> None:
-    # In the job nothing is installed: only the members' src/ are on sys.path.
-    paths = [str(d) for d in entry.source_dirs(REPO_ROOT)]
+def test_train_baseline_runs_in_the_job_from_the_members_src_alone() -> None:
     for name in ("train-baseline", "sagemaker-train"):
         assert cli.PROJECT_COMMANDS[name].module == "finetuned_detector.cli"
-    assert importlib.machinery.PathFinder.find_spec("finetuned_detector", paths)
+    # The job installs no member: only their src/ dirs and the third-party
+    # packages are on sys.path. -S keeps the editable installs' .pth files out,
+    # and -I ignores PYTHONPATH, so the paths are set in the child itself.
+    paths = [str(d) for d in entry.source_dirs(REPO_ROOT)]
+    paths += [p for p in sys.path if p.endswith("site-packages")]
+    code = (
+        f"import sys; sys.path[:0] = {paths!r}; "
+        "import finetuned_detector; print(finetuned_detector.__file__); "
+        "from aerial_search import cli; cli.main(['train-baseline', '--help'])"
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", code], capture_output=True, text=True
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith(str(REPO_ROOT / "projects")), done.stdout
 
 
 def test_train_baseline_runs_the_project_experiment(monkeypatch, capsys) -> None:
