@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from aerial_search import PACKAGE_DIR
 from aerial_search import run as run_module
 from aerial_search.cloud import cost, launcher, source
 
@@ -222,15 +223,13 @@ def test_the_cli_default_archives_the_whole_repository(
     run_git(repo, "add", ".")
     run_git(repo, "commit", "-m", "entry")
     run_git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
-    monkeypatch.setattr(
-        run_module, "_code_location", lambda: repo / "src" / "aerial_search"
-    )
+    monkeypatch.setattr(run_module, "_code_location", lambda: repo / PACKAGE_DIR)
     plan = launch(None, tmp_path)
     with tarfile.open(fileobj=io.BytesIO(plan.archive), mode="r:gz") as tar:
         names = tar.getnames()
     assert "tools/sagemaker_entry.py" in names
     assert "pyproject.toml" in names
-    assert "src/aerial_search/a.py" in names
+    assert "shared/aerial_search/src/aerial_search/a.py" in names
 
 
 def test_the_launch_ships_the_locked_versions_and_attests_them(
@@ -248,14 +247,14 @@ def test_the_launch_ships_the_locked_versions_and_attests_them(
 
 
 def test_the_constraints_come_from_uv_export_of_the_lock() -> None:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[3]
     text = source.export_constraints(root).decode()
     assert "\npycocotools==" in text
     assert "--frozen" in text and "--no-hashes" in text
 
 
 def test_a_dirty_tree_is_refused(repo: Path, tmp_path: Path) -> None:
-    (repo / "src" / "aerial_search" / "a.py").write_text("x = 3\n")
+    (repo / PACKAGE_DIR / "a.py").write_text("x = 3\n")
     with pytest.raises(run_module.ProvenanceError, match="uncommitted"):
         launch(repo, tmp_path)
 

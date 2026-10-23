@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aerial-search"
+version = "0.1.0"
+description = "Shared evaluation: WiSARD data, site-day folds, metrics, run provenance"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Eoin McAllister" }]
+dependencies = [
+    "boto3>=1.43.72",
+    "gdown>=6.1.0",
+    "pillow>=12.3.0",
+    "pycocotools>=2.0.11",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "transformers>=5.18.0",
+]
+
+[project.scripts]
+aerial-search = "aerial_search.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aerial_search"]

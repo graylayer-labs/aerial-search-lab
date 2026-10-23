@@ -22,7 +22,7 @@ from aerial_search.data.wisard import (
 FLIGHT = {
     "flight_0001": Collection("flight_VIS_0001", "flight_IR_0002", "0001", "0002")
 }
-WISARD_ROOT = Path(__file__).resolve().parents[1] / "data" / "raw" / "wisard-full"
+WISARD_ROOT = Path(__file__).resolve().parents[3] / "data" / "raw" / "wisard-full"
 
 
 def test_pairs_frames_by_index_not_position(tmp_path: Path) -> None:

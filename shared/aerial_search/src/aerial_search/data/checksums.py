@@ -26,12 +26,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from aerial_search import REPO_ROOT
+
 DATASET = "wisard-full"
 BUCKET_URIS = {
     DATASET: "s3://ssl-aerial-person-detection-data-eu-west1/wisard/raw/wisard-full"
 }
 LIST_DIR = Path(__file__).resolve().parent / "checksums"
-SETTINGS = Path(__file__).resolve().parents[3] / ".claude" / "settings.json"
+SETTINGS = REPO_ROOT / ".claude" / "settings.json"
 WORKERS = 8
 
 Progress = Callable[[str], None]

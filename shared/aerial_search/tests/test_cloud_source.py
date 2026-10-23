@@ -4,6 +4,7 @@ import io
 import tarfile
 from pathlib import Path
 
+from aerial_search import PACKAGE_DIR
 from aerial_search.cloud import source
 
 
@@ -23,7 +24,7 @@ def test_the_archive_digest_equals_the_digest_of_its_extracted_files(
 def test_a_modified_file_changes_the_digest(repo: Path, tmp_path: Path) -> None:
     archive, digest = source.archive_commit(repo, "HEAD")
     extract(archive, tmp_path / "code")
-    (tmp_path / "code" / "src" / "aerial_search" / "a.py").write_text("x = 2\n")
+    (tmp_path / "code" / PACKAGE_DIR / "a.py").write_text("x = 2\n")
     assert source.digest_dir(tmp_path / "code") != digest
 
 
@@ -45,7 +46,7 @@ def test_bytecode_and_the_outputs_directory_do_not_count(
 ) -> None:
     archive, digest = source.archive_commit(repo, "HEAD")
     extract(archive, tmp_path / "code")
-    cache = tmp_path / "code" / "src" / "aerial_search" / "__pycache__"
+    cache = tmp_path / "code" / PACKAGE_DIR / "__pycache__"
     cache.mkdir()
     (cache / "a.cpython-312.pyc").write_bytes(b"\0")
     (tmp_path / "code" / "outputs" / "r").mkdir(parents=True)

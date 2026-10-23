@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from aerial_search import PACKAGE_DIR
+
 
 def run_git(cwd: Path, *args: str) -> str:
     return subprocess.run(
@@ -20,10 +22,10 @@ def run_git(cwd: Path, *args: str) -> str:
 def repo(tmp_path: Path) -> Path:
     """A repo shaped like the project, HEAD equal to a fake origin/main."""
     path = tmp_path / "repo"
-    (path / "src" / "aerial_search").mkdir(parents=True)
+    (path / PACKAGE_DIR).mkdir(parents=True)
     run_git(path, "init", "-b", "main")
     (path / ".gitignore").write_text("outputs/\n")
-    (path / "src" / "aerial_search" / "a.py").write_text("x = 1\n")
+    (path / PACKAGE_DIR / "a.py").write_text("x = 1\n")
     (path / "run.sh").write_text("#!/bin/sh\n")
     (path / "run.sh").chmod(0o755)
     run_git(path, "add", ".")

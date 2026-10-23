@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from aerial_search import PACKAGE_DIR
 from aerial_search import run as run_module
 from aerial_search.cloud import source
 
@@ -15,9 +16,9 @@ from aerial_search.cloud import source
 @pytest.fixture
 def jobcode(tmp_path: Path) -> Path:
     code = tmp_path / "jobcode"
-    (code / "src" / "aerial_search").mkdir(parents=True)
-    (code / "src" / "aerial_search" / "a.py").write_text("x = 1\n")
-    return code / "src" / "aerial_search"
+    (code / PACKAGE_DIR).mkdir(parents=True)
+    (code / PACKAGE_DIR / "a.py").write_text("x = 1\n")
+    return code / PACKAGE_DIR
 
 
 @pytest.fixture
@@ -50,7 +51,7 @@ def verified_data(tmp_path: Path) -> dict[str, Any]:
 def attest(monkeypatch, jobcode: Path, **over: Any) -> None:
     attestation = {
         "commit": "a" * 40,
-        "source_sha256": source.digest_dir(jobcode.parents[1]),
+        "source_sha256": source.digest_dir(jobcode.parents[3]),
         "manifests_sha256": "c" * 64,
         "instance_type": "ml.g4dn.xlarge",
         "spot": True,
@@ -69,7 +70,7 @@ def test_an_attested_job_records_commit_instance_spot_and_job_name(
         "r", {}, 7, device="cpu", repo=jobcode, **verified_data
     )
     record = json.loads((directory / "run.json").read_text())
-    assert directory == jobcode.parents[1] / "outputs" / "r"
+    assert directory == jobcode.parents[3] / "outputs" / "r"
     assert record["commit"] == "a" * 40
     assert record["scratch"] is False
     assert record["attestation"]["instance_type"] == "ml.g4dn.xlarge"
@@ -85,7 +86,7 @@ def test_attested_code_that_was_modified_is_refused(
     (jobcode / "a.py").write_text("x = 2\n")
     with pytest.raises(run_module.ProvenanceError, match="source"):
         run_module.start_run("r", {}, 7, device="cpu", repo=jobcode, **verified_data)
-    assert not (jobcode.parents[1] / "outputs").exists()
+    assert not (jobcode.parents[3] / "outputs").exists()
 
 
 def test_an_attestation_outside_a_sagemaker_job_is_not_honoured(
