@@ -21,7 +21,7 @@ You implement a single GitHub issue in this repository.
 ## While working
 
 - Work on a branch named `<type>/<issue-number>-<slug>`.
-- Write a failing test first for any change under `src/`.
+- Write a failing test first for any change under any `src/` (shared or a project).
 - Stay inside the issue's scope. If you find an unrelated problem, report it
   so it can become its own issue. Do not fix it here.
 - Match the surrounding code's style. Run `uv run ruff check --fix .`,

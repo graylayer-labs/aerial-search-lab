@@ -31,7 +31,7 @@ subset on purpose, name the clips:
 ## The pairing rule
 
 1. **Clips.** Only the VIS/IR directory pairs listed in `WISARD_COLLECTIONS`
-   (`src/aerial_search/data/wisard.py`) are paired. The Mavic 2 Enterprise
+   (`shared/aerial_search/src/aerial_search/data/wisard.py`) are paired. The Mavic 2 Enterprise
    writes the VIS and IR video of one recording as consecutive DJI clip
    numbers, so `..._VIS_0003` goes with `..._IR_0004`.
    `220109_Baker_Enterprise_VIS_1` holds `DJI_0582` and `IR_1` holds

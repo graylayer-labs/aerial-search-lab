@@ -176,8 +176,8 @@ allows it later.
 ## Building the first cache (#65)
 
 `aerial-search cache-features` implements the recommendation. Code:
-`src/aerial_search/experiments/feature_cache.py` (the cache) and
-`src/aerial_search/models/backbone.py` (loading, weight checksums, the NaFlex
+`projects/frozen-head/src/frozen_head/feature_cache.py` (the cache) and
+`projects/frozen-head/src/frozen_head/backbone.py` (loading, weight checksums, the NaFlex
 extractor, shared with `tools/forward_pass_cost.py`).
 
 - **Layout.** `outputs/features/siglip2-base-naflex-1024tok/` holds

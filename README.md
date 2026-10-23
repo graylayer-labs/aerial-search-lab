@@ -2,9 +2,15 @@
 
 [![ci](https://github.com/graylayer-labs/ssl-aerial-person-detection/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/graylayer-labs/ssl-aerial-person-detection/actions/workflows/ci.yml)
 
-This project finds people in drone footage from RGB (ordinary) and thermal
-(infrared) cameras. It asks how far a detector gets when footage is plentiful
-and labels, the boxes drawn by hand, are scarce.
+A personal research lab, run like a thesis: one question, several
+approaches, one honest evaluation. The question is how to find people in
+drone footage from RGB (ordinary) and thermal (infrared) cameras when footage
+is plentiful and labels, the boxes drawn by hand, are scarce. Each approach
+lives in its own folder under [projects/](projects/), and all of them are
+scored by the same shared evaluation in [shared/](shared/aerial_search/): the
+same data, the same held-out site-days, the same metrics and the same record
+of how every run was made. Failures are written up with the same care as
+successes.
 
 ## Why
 
@@ -19,7 +25,18 @@ and measure everything on flights the model has never seen.
 
 ![Pipeline diagram. RGB and thermal drone footage, mostly unlabelled, is paired frame by frame. A pretrained vision foundation model is adapted to the paired footage with self-supervised learning. A person detector is trained on top using a small labelled fraction, then evaluated on flights the model has never seen.](docs/figures/pipeline.svg)
 
-## Where it's at (2026-10-15)
+## Approaches
+
+Mean ± sample sd over the four held-out site-days at 10% of the training
+labels, as `ap_iou25` / `ap_iou50` (explained under Results so far); the
+per-fold scores are in each project's README.
+
+| Project | Approach | Status | RGB | Thermal | Source |
+|---|---|---|---|---|---|
+| [finetuned-detector](projects/finetuned-detector/) | A COCO-pretrained Faster R-CNN fine-tuned on the few labels: the bar | Results in; tiled runs next | 0.163 ± 0.042 / 0.046 ± 0.011 | 0.256 ± 0.220 / 0.137 ± 0.146 | [results](docs/supervised-baseline-results.md) |
+| [frozen-head](projects/frozen-head/) | A small head on frozen SigLIP 2 features | Results in; below the bar | 0.113 ± 0.075 / 0.006 ± 0.005 | 0.129 ± 0.096 / 0.007 ± 0.005 | [results](docs/supervised-baseline-results.md) |
+
+## Where it's at (2026-10-23)
 
 - **Done:** the data is paired, split by site and day, and scored; the
   baseline to beat is an ordinary fine-tuned detector, which leads a frozen
@@ -28,7 +45,9 @@ and measure everything on flights the model has never seen.
   jobs, capped at EUR 15 a run and EUR 60 a month. No job has run yet.
 - **Done:** the detector can read frames at full resolution by cutting them into
   tiles, and a stopped run resumes. No tiled score yet.
-- **Doing:** waiting on AWS to grant spot GPU quota ([#127](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/127)).
+- **Done:** the repo is reshaped into a lab of approaches that share one
+  evaluation ([#160](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/160)).
+- **Doing:** waiting on AWS to grant a spot GPU quota for the first SageMaker job ([#127](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/127)).
 - **Next:** cloud runs of the tiled detector ([#96](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/96)), then adapting the model with unlabelled footage.
 
 The dated log is [docs/progress.md](docs/progress.md).
@@ -54,6 +73,13 @@ tables and spread are in the linked results.
 ## How to read this repo
 
 Start with `docs/progress.md`, then the two milestones.
+
+**Code**
+- `shared/aerial_search/`: the shared evaluation (data, folds, frame
+  selection, metrics, tables, run provenance, cloud runs) and the
+  `aerial-search` command.
+- `projects/<name>/`: one approach each, with its own README.
+- `tools/`: one-off scripts worth keeping.
 
 **Story**
 - `docs/progress.md`: what is now true, newest first.
@@ -88,10 +114,16 @@ Start with `docs/progress.md`, then the two milestones.
 Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync --dev
+uv sync --dev      # the workspace: shared/ and every project
 uv run pytest
 uv run ruff check .
+uv run aerial-search --help
 ```
+
+## Starting a new approach
+
+Copy `projects/_template`, write the expected results before the first run,
+and register its commands. The steps are in [projects/README.md](projects/README.md).
 
 ## How this project is run
 

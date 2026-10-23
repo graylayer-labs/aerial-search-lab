@@ -15,7 +15,7 @@ has to be written where the next agent can find it ([#10 handoff][i10-handoff]).
 ## What we found
 
 **The run module passed its criteria and failed its review three ways.**
-`src/aerial_search/run.py` has `start_run` and `finish_run`. A normal run is
+`shared/aerial_search/src/aerial_search/run.py` has `start_run` and `finish_run`. A normal run is
 refused unless the tree is clean and `HEAD` is on `origin/main`. A
 `--scratch` run is allowed from anywhere, written to `outputs/scratch-<name>/`
 and marked `"scratch": true` in `run.json`. The first version did all of that.
@@ -117,10 +117,10 @@ seconds. `CLAUDE.md` says hashing all of it takes about 25.
 The first message is shown without the list of changed files that follows it.
 Both runs wrote nothing under `outputs/`. We pointed `--manifests` at ones made
 with `prepare --scratch`, which a normal run would also refuse.
-The tests that pin each rule are in `tests/test_run.py`:
+The tests that pin each rule are in `shared/aerial_search/tests/test_run.py`:
 
 ```bash
-uv run pytest tests/test_run.py
+uv run pytest shared/aerial_search/tests/test_run.py
 ```
 
 ## What we would do differently

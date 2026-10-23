@@ -84,7 +84,7 @@ never higher. The largest gap was 0.67 ([evaluation review][metric-review]).
 
 ```bash
 uv sync --dev
-uv run pytest tests/test_detection_evaluation.py
+uv run pytest shared/aerial_search/tests/test_detection_evaluation.py
 ```
 
 On 2026-10-01 the output was `27 passed in 1.05s`. The tests hold the

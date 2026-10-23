@@ -153,8 +153,9 @@ Two standing issues never close: "Reusable tooling candidates" (#9) and
 
 CI proves the code runs. It does not prove a result is valid.
 
-- Changes to logic under `src/`, to experiments, or to metrics: the
-  `reviewer` agent checks the branch before auto-merge is set.
+- Changes to logic under any `src/` (shared or a project), to experiments,
+  or to metrics: the `reviewer` agent checks the branch before auto-merge is
+  set.
 - Docs, config, and formatting-only changes: the main session reads the diff
   itself.
 - Say in the PR which of the two happened.
@@ -267,8 +268,9 @@ sign; it signs commits and nothing else.
 ## Commands
 
 ```bash
-uv sync --dev                  # install
-uv run pytest                  # tests
+uv sync --dev                  # install the workspace: shared and every project
+uv run pytest                  # tests of shared/ and projects/
+uv run pytest projects/<name>  # one project's tests
 uv run ruff check --fix .      # lint
 uv run ruff format .           # format
 uv run ty check                # types
@@ -276,6 +278,9 @@ tools/install_archify.sh       # one-time: install the Archify diagram skill
 ```
 
 - CI runs all four checks: ruff check, ruff format, ty, and pytest.
+- The root is a uv workspace, not a package. Its `dev` group lists every
+  member, so `uv sync --dev` installs them all without `--all-packages` (the
+  org CI runs plain `uv sync --dev --locked`).
 - Inside an agent worktree, `uv run` warns that `VIRTUAL_ENV` does not match.
   It is harmless. Prefix the command with `env -u VIRTUAL_ENV` to silence it.
 - A fresh worktree has no environment. Run `uv sync --dev` first.
@@ -324,8 +329,8 @@ tools/install_archify.sh       # one-time: install the Archify diagram skill
 
 ### Pinning the data
 
-The dataset is pinned by `shared/aerial_search/src/aerial_search/data/checksums/wisard-full.tsv.gz`:
-one line per file (path, size, SHA-256), 100,794 files, 3.9 MB. Its root hash
+The dataset is pinned by
+`shared/aerial_search/src/aerial_search/data/checksums/wisard-full.tsv.gz`: one line per file (path, size, SHA-256), 100,794 files, 3.9 MB. Its root hash
 (SHA-256 of the list's text) is
 `6e5e5d554c4be119f15bb636049800788904f3a2e2759cabce402c676d1575ed`.
 Hashing all 43 GB takes about 25 seconds.
@@ -398,13 +403,28 @@ uv run python tools/pairing_contact_sheets.py data/raw/wisard-full \
 
 ```
 pyproject.toml       uv workspace root; not a package itself
-shared/aerial_search/  the shared package (src/aerial_search: data/,
-                     models/, experiments/, run.py, cloud/) and its tests/
+shared/aerial_search/  the shared evaluation, package aerial_search: data/
+                     (pairing, folds, records), evaluation/ (metrics, tables),
+                     run.py, cloud/, the aerial-search CLI; and its tests/
+projects/<name>/     one package per approach, with its README and tests/
+projects/_template/  the starting point for a new approach
 docs/                milestone write-ups and decision notes
 tools/               one-off scripts that are worth keeping
 data/                datasets and manifests (git-ignored)
 outputs/             run artefacts (git-ignored)
 ```
+
+## Projects
+
+- Each approach to the problem is one project under `projects/`. A new one
+  starts from `projects/_template` (steps in `projects/README.md`).
+- It writes its expected results in its README before its first run.
+- It shares the evaluation: data, folds, frame selection
+  (`aerial_search.data.records`), metrics and `start_run` come from
+  `aerial_search`, and the project changes none of them. Its commands are
+  registered in `PROJECT_COMMANDS` in the shared CLI, so they run as
+  `aerial-search <command>`, in a cloud job too.
+- `shared/` never imports a project; a test enforces it.
 
 ## Documentation
 
@@ -481,7 +501,7 @@ to its issue or PR. No version numbers.
 - **Feature cache.** `uv run aerial-search cache-features siglip2-base-naflex
   --camera rgb|thermal [--part K/N] [--collection ID]` runs the frozen
   backbone once per image and writes `outputs/features/<model>-<budget>tok/`,
-  read per image or fold with `aerial_search.experiments.feature_cache`
+  read per image or fold with `frozen_head.feature_cache`
   (`read_index`, `read_features`). Each session is a run under the cache's
   `runs/` and goes through `start_run`; the cache's `cache.json` holds the
   model, weight checksum, token budget, pooling and dtype, and a run with any

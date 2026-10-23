@@ -2,8 +2,9 @@
 
 Issue #66. The off-the-shelf bar: how far a frozen SigLIP 2 backbone gets
 with 1, 5, 10 and 100% of the labels, per camera, on the four folds. Code:
-`src/aerial_search/models/head.py`, `src/aerial_search/experiments/head_experiment.py`,
-`src/aerial_search/experiments/head_table.py`.
+`projects/frozen-head/src/frozen_head/head.py`,
+`projects/frozen-head/src/frozen_head/head_experiment.py`,
+`shared/aerial_search/src/aerial_search/evaluation/head_table.py`.
 
 ## What the cell size allows
 

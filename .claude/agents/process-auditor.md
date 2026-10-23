@@ -31,7 +31,7 @@ command and what it showed.
 **Pull requests**
 4. Every merged PR closes an issue and has a Conventional Commits title.
 5. Its Evidence section holds real command output, not a summary of it.
-6. It says who reviewed it. A PR that changed logic under `src/`, an
+6. It says who reviewed it. A PR that changed logic under any `src/`, an
    experiment, or a metric was checked by the `reviewer` agent.
 7. Every commit on `main` came from a PR. Its subject ends with `(#<n>)`.
 

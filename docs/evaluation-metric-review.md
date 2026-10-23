@@ -1,8 +1,8 @@
 # Evaluation metric review
 
 How detectors are scored in this project, and why. The code is
-`src/aerial_search/evaluation/detection.py`; the tests with hand-worked
-answers are `tests/test_detection_evaluation.py`. Issue:
+`shared/aerial_search/src/aerial_search/evaluation/detection.py`; the tests with hand-worked
+answers are `shared/aerial_search/tests/test_detection_evaluation.py`. Issue:
 [#4](https://github.com/graylayer-labs/ssl-aerial-person-detection/issues/4).
 Review: [#34](https://github.com/graylayer-labs/ssl-aerial-person-detection/pull/34).
 
