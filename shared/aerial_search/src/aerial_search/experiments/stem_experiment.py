@@ -38,6 +38,7 @@ from PIL import Image
 from torch import Tensor
 
 from aerial_search.data.folds import TEST, VALIDATION, train_file, view_dir
+from aerial_search.data.records import load_split, record_boxes
 from aerial_search.evaluation.detection import (
     GroundTruth,
     Prediction,
@@ -52,9 +53,7 @@ from aerial_search.experiments.head_experiment import (
     cache_arm,
     check_cache,
     decode,
-    load_split,
     load_warm_start,
-    record_boxes,
 )
 from aerial_search.models.backbone import NaflexExtractor, Prepared
 from aerial_search.models.head import CentreHead, centre_loss

@@ -4,7 +4,7 @@ The supervised baseline: a torchvision detector with COCO weights, trained on
 the same fold, camera, label fraction and seed as `train-head`, selected on the
 fold's validation split and scored on its test site-day through
 `aerial_search.evaluation.detection`. Which frames it sees comes from
-`head_experiment.select_records`, the function the head uses, and the score is
+`records.select_records`, the function the head uses, and the score is
 the same `evaluate_detections`, so the two sit in one table
 (`head_table.markdown_compare`).
 """
@@ -33,14 +33,14 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.io import ImageReadMode, decode_image
 
 from aerial_search.data import tiling
+from aerial_search.data.records import record_boxes, select_records, subsample
 from aerial_search.evaluation.detection import (
     DetectionReport,
     GroundTruth,
     Prediction,
     evaluate_detections,
 )
-from aerial_search.experiments.head_experiment import record_boxes, select_records
-from aerial_search.experiments.predictions import (
+from aerial_search.evaluation.predictions import (
     PREDICTIONS_FILENAME,
     PredictionLog,
     read_model_id,
@@ -147,14 +147,6 @@ def tile_spec(camera: str, recipe: BaselineRecipe) -> TileSpec | None:
         recipe.min_visible,
         recipe.empty_ratio,
     )
-
-
-def subsample(records: Sequence[dict], limit: int) -> list[dict]:
-    """`limit` records spread evenly through the list (all if limit is 0)."""
-    if limit <= 0 or len(records) <= limit:
-        return list(records)
-    picks = np.linspace(0, len(records) - 1, limit).round().astype(int)
-    return [records[i] for i in picks]
 
 
 # --- model ----------------------------------------------------------------------

@@ -8,8 +8,8 @@ import pytest
 import torch
 from PIL import Image
 
+from aerial_search.data import records as rc
 from aerial_search.experiments import baseline_experiment as be
-from aerial_search.experiments import head_experiment as he
 
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
 MANIFESTS = Path("data/manifests/wisard-full")
@@ -64,7 +64,7 @@ def test_baseline_and_head_select_the_same_frames_in_every_cell():
     for fold in sorted(p.name for p in (MANIFESTS / "folds").iterdir() if p.is_dir()):
         for camera in ("rgb", "thermal"):
             for percent in (1, 5, 10, 100):
-                head_paths, head = he.select_records(MANIFESTS, fold, camera, percent)
+                head_paths, head = rc.select_records(MANIFESTS, fold, camera, percent)
                 path = MANIFESTS / "folds" / fold / camera / f"train_{percent}pct.jsonl"
                 assert head_paths["train"] == path
                 on_disk = [
@@ -110,7 +110,7 @@ def test_a_scratch_run_uses_the_selected_frames_and_scores_the_test_site_day(
         repo=tmp_path / "repo",
         argv=["x"],
     )
-    _, expected = he.select_records(manifests, FOLD, "thermal", 100)
+    _, expected = rc.select_records(manifests, FOLD, "thermal", 100)
     assert list(seen.values()) == [
         [r["image"] for r in expected[k]] for k in ("train", "validation", "test")
     ]

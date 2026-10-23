@@ -46,7 +46,7 @@ def trained(directory: Path, weight: float) -> Any:
 
 
 def predicted(saver: Any, image: str = "a") -> None:
-    from aerial_search.experiments import predictions as pr
+    from aerial_search.evaluation import predictions as pr
 
     log = pr.PredictionLog(saver.predictions)
     log.bind(saver.model_id)
@@ -56,7 +56,7 @@ def predicted(saver: Any, image: str = "a") -> None:
 def test_another_models_predictions_beside_a_trained_checkpoint_are_set_aside(
     tmp_path: Path,
 ) -> None:
-    from aerial_search.experiments import predictions as pr
+    from aerial_search.evaluation import predictions as pr
     from aerial_search.experiments.baseline_experiment import Checkpoints
 
     other = trained(tmp_path / "other", 1.0)
@@ -93,7 +93,7 @@ def test_predictions_with_no_model_id_beside_a_trained_checkpoint_are_set_aside(
 
 
 def test_the_same_models_predictions_resume(tmp_path: Path) -> None:
-    from aerial_search.experiments import predictions as pr
+    from aerial_search.evaluation import predictions as pr
     from aerial_search.experiments.baseline_experiment import Checkpoints
 
     mine = trained(tmp_path, 2.0)
@@ -105,7 +105,7 @@ def test_the_same_models_predictions_resume(tmp_path: Path) -> None:
 
 
 def test_a_predictions_file_refuses_a_second_model(tmp_path: Path) -> None:
-    from aerial_search.experiments import predictions as pr
+    from aerial_search.evaluation import predictions as pr
 
     predicted(trained(tmp_path, 1.0))
     with pytest.raises(ValueError, match="model"):
