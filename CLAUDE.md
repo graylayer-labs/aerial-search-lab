@@ -324,7 +324,7 @@ tools/install_archify.sh       # one-time: install the Archify diagram skill
 
 ### Pinning the data
 
-The dataset is pinned by `src/aerial_search/data/checksums/wisard-full.tsv.gz`:
+The dataset is pinned by `shared/aerial_search/src/aerial_search/data/checksums/wisard-full.tsv.gz`:
 one line per file (path, size, SHA-256), 100,794 files, 3.9 MB. Its root hash
 (SHA-256 of the list's text) is
 `6e5e5d554c4be119f15bb636049800788904f3a2e2759cabce402c676d1575ed`.
@@ -381,7 +381,7 @@ uv run aerial-search checksum data/raw/wisard-full --force   # re-pin; only if t
 ### Pairing
 
 Which RGB frame goes with which thermal frame is decided in
-`src/aerial_search/data/wisard.py`, and the evidence is in
+`shared/aerial_search/src/aerial_search/data/wisard.py`, and the evidence is in
 `docs/wisard-pairing-review.md`. Only directory pairs listed in
 `WISARD_COLLECTIONS` are paired. Pairs are 0 to 2 frames apart in time; the
 cameras drift. Regenerate the manifests and the contact sheets with:
@@ -397,8 +397,9 @@ uv run python tools/pairing_contact_sheets.py data/raw/wisard-full \
 ## Layout
 
 ```
-src/aerial_search/   package: data/, models/, experiments/
-tests/               tests for the package
+pyproject.toml       uv workspace root; not a package itself
+shared/aerial_search/  the shared package (src/aerial_search: data/,
+                     models/, experiments/, run.py, cloud/) and its tests/
 docs/                milestone write-ups and decision notes
 tools/               one-off scripts that are worth keeping
 data/                datasets and manifests (git-ignored)
@@ -456,7 +457,8 @@ to its issue or PR. No version numbers.
   quote its numbers.
 - Every run is defined by a committed config and a seed, and writes to
   `outputs/<run-name>/` with a `run.json` that records the commit, the config,
-  the seed, and the machine. `src/aerial_search/run.py` (`start_run`) enforces
+  the seed, and the machine.
+  `shared/aerial_search/src/aerial_search/run.py` (`start_run`) enforces
   this: it refuses a normal run unless the tree is clean (untracked files
   count) and `HEAD` is on the local `origin/main`, and it fails closed if git
   cannot tell. It never fetches, so run `git fetch` first. Pass `--scratch` to
@@ -544,7 +546,7 @@ to its issue or PR. No version numbers.
   afterwards: `sagemaker-fetch` writes them to `cloud-job.json` beside
   `run.json`, after re-archiving the attested commit and checking its digest
   and that it is on `origin/main`. Design and limits:
-  `src/aerial_search/cloud/entry.py`.
+  `shared/aerial_search/src/aerial_search/cloud/entry.py`.
 - Any number quoted in a doc or README must be reproducible from a committed
   config. If a number cannot be traced, remove it.
 - Report negative results. State what was expected, what happened, and the
