@@ -165,6 +165,8 @@ def month_to_date_eur(
             )
         else:
             usd = _family_usd(ce, query, usage_family)
+    except UsageTypeMismatch:
+        raise
     except Exception as error:
         raise CostRefused(
             f"cannot read month-to-date spend from Cost Explorer ({error}); "
@@ -173,8 +175,15 @@ def month_to_date_eur(
     return usd * eur_per_usd
 
 
+class UsageTypeMismatch(CostRefused):
+    """SageMaker spend whose usage types name no instance (`ml.`)."""
+
+
 def _family_usd(ce: Any, query: dict[str, Any], usage_family: str) -> float:
-    usd, token = 0.0, None
+    """The family's spend. Fails safe: SageMaker spend with no usage type
+    naming any instance means the assumed format is wrong, not zero."""
+    usd = total = 0.0
+    named, token = False, None
     while True:
         response = ce.get_cost_and_usage(
             **query,
@@ -183,11 +192,21 @@ def _family_usd(ce: Any, query: dict[str, Any], usage_family: str) -> float:
         )
         for result in response["ResultsByTime"]:
             for group in result.get("Groups", []):
+                amount = float(group["Metrics"]["UnblendedCost"]["Amount"])
+                total += amount
+                named = named or any("ml." in key for key in group["Keys"])
                 if any(usage_family in key for key in group["Keys"]):
-                    usd += float(group["Metrics"]["UnblendedCost"]["Amount"])
+                    usd += amount
         token = response.get("NextPageToken")
         if not token:
-            return usd
+            break
+    if total > 0 and not named:
+        raise UsageTypeMismatch(
+            f"SageMaker spent {total:.2f} USD this month but no usage type names "
+            "an instance (ml.*): the usage-type format did not match, so the "
+            f"{usage_family}* spend cannot be counted; pass --month-to-date-eur"
+        )
+    return usd
 
 
 def running_jobs_eur(

@@ -29,6 +29,10 @@ each links to the issue or pull request that holds the detail.
   and refused by the same cost guard; the GPU path is unchanged. Dry run
   only: the job cannot read the feature cache yet, and says so.
   ([#188](https://github.com/graylayer-labs/aerial-search-lab/issues/188))
+- The CPU job can now read the feature cache: one camera's files go to S3
+  once per digest, the job checks them before it runs, and a real send is
+  allowed. The EUR 5 CPU cap now counts only CPU spend. No CPU job has run
+  yet. ([#191](https://github.com/graylayer-labs/aerial-search-lab/issues/191))
 
 ### 2026-10-15
 

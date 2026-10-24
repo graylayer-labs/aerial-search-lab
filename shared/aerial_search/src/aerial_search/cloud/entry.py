@@ -47,7 +47,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from aerial_search import REPO_ROOT
-from aerial_search.cloud import safe_name, source
+from aerial_search.cloud import plain_cache_name, safe_name, source
 
 CODE_ROOT = REPO_ROOT
 DATASET = Path("/opt/ml/input/data/dataset")
@@ -63,7 +63,6 @@ FEATURES = Path("/opt/ml/input/data/features")  # train-head's feature cache
 FEATURE_LINKS = Path("/opt/ml/feature-links")
 ATTESTATION_ENV = "AERIAL_SEARCH_ATTESTATION"
 FEATURES_ENV = "AERIAL_SEARCH_FEATURES"  # as the launcher's
-_PLAIN = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class JobRefused(RuntimeError):
@@ -184,8 +183,7 @@ def _sent_features(environ: Mapping[str, str]) -> tuple[str, str]:
         digest, cache = str(sent["features_sha256"]), str(sent["cache"])
     except (KeyError, ValueError, TypeError) as error:
         raise JobRefused(f"unreadable {FEATURES_ENV}: {error!r}") from None
-    parts = cache.split("/")
-    if len(parts) != 2 or not all(_PLAIN.fullmatch(p) and p != ".." for p in parts):
+    if not plain_cache_name(cache):
         raise JobRefused(f"the cache name {cache!r} is not <parent>/<directory>")
     return digest, cache
 

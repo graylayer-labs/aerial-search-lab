@@ -573,6 +573,39 @@ def test_a_head_launch_sends_the_chosen_cache_files_once(
     assert not [k for kind, k in cloud.s3.calls if kind == "upload"]
 
 
+@pytest.mark.parametrize("parent", ["my features", "f$"])
+def test_a_cache_name_the_job_would_refuse_is_refused_before_sending(
+    repo: Path, tmp_path: Path, parent: str
+) -> None:
+    features = write_cache(tmp_path / parent / "c")
+    cloud = Cloud()
+    with pytest.raises(ValueError, match="<parent>/<directory>"):
+        launch(
+            repo,
+            tmp_path,
+            **CPU,
+            expected_hours=0.5,
+            command="train-head",
+            features=features,
+            dry_run=False,
+            session_factory=lambda: cloud,
+        )
+    assert not cloud.s3.calls and not cloud.created
+
+
+@pytest.mark.parametrize(
+    ("cache", "plain"),
+    [("features/m-1024tok", True), ("../x", False), ("a/b/c", False), ("x", False)]
+    + [("features/..", False), ("/abs", False), ("a b/c", False)],
+)
+def test_the_launcher_and_job_share_one_cache_name_rule(
+    cache: str, plain: bool
+) -> None:
+    from aerial_search.cloud import plain_cache_name
+
+    assert plain_cache_name(cache) is plain
+
+
 def test_a_head_dry_run_names_the_features_channel_and_uploads_nothing(
     repo: Path, tmp_path: Path
 ) -> None:

@@ -293,6 +293,33 @@ def test_the_cpu_month_to_date_sums_only_m5_usage_types_over_every_page() -> Non
     assert calls[1]["NextPageToken"] == "p2"
 
 
+def test_spend_under_usage_types_naming_no_instance_is_refused_not_zero() -> None:
+    # If the usage-type format is not the assumed one, m5 spend would read 0.
+    class Ce:
+        def get_cost_and_usage(self, **_: Any) -> Any:
+            groups = [group("EUW1-TrainingSpot-m5xl", "2.0"), group("Other", "0")]
+            return {"ResultsByTime": [{"Groups": groups}]}
+
+    with pytest.raises(cost.CostRefused, match="usage-type format") as refused:
+        cost.month_to_date_eur(
+            Ce(), eur_per_usd=1.0, today=cost.date(2026, 10, 14), usage_family="ml.m5."
+        )
+    assert "cannot read" not in str(refused.value)
+
+
+def test_no_sagemaker_spend_at_all_reads_as_zero() -> None:
+    class Ce:
+        def get_cost_and_usage(self, **_: Any) -> Any:
+            return {"ResultsByTime": [{"Groups": []}]}
+
+    assert (
+        cost.month_to_date_eur(
+            Ce(), eur_per_usd=1.0, today=cost.date(2026, 10, 14), usage_family="ml.m5."
+        )
+        == 0.0
+    )
+
+
 def test_the_gpu_month_to_date_stays_account_wide_and_ungrouped() -> None:
     seen: dict[str, Any] = {}
 

@@ -43,14 +43,6 @@ def head_args(args: argparse.Namespace) -> list[str]:
     return [*out, "--scratch"] if args.scratch else out
 
 
-def missing_inputs(args: argparse.Namespace) -> list[str]:
-    """What the job needs that the launcher cannot send yet (#188)."""
-    return [
-        f"features: the feature cache {args.cache} as an input channel; the job "
-        "has no way to read it yet"
-    ]
-
-
 def _rate(text: str) -> float:
     """A EUR per USD rate no lower than the guard's, which errs high on purpose:
     a lower one would let the guard price a job below what it may cost."""
@@ -334,15 +326,22 @@ def main(argv: list[str]) -> None:
     if args.command == "sagemaker-train-head":
         from aerial_search import run
         from aerial_search.cloud import cost, launcher
-        from frozen_head import head_experiment
+        from aerial_search.data import records
+        from frozen_head import feature_cache, head_experiment
 
-        missing = missing_inputs(args)
-        if missing and not args.dry_run:
-            raise SystemExit(f"refusing to launch: no input for {'; '.join(missing)}")
         logical = args.run_name or head_experiment.default_run_name(
             args.cache, args.camera, args.fold, args.percent, args.seed
         )
         try:
+            files = head_experiment.job_files(
+                args.cache,
+                args.manifests,
+                fold=args.fold,
+                camera=args.camera,
+                percent=args.percent,
+                scratch=args.scratch,
+            )
+            features = launcher.Features(args.cache, files)
             plan = launcher.launch(
                 repo=None,
                 logical_run=logical,
@@ -362,14 +361,21 @@ def main(argv: list[str]) -> None:
                 session_factory=shared._aws_session,
                 instance_type=CPU_INSTANCE,
                 command="train-head",
+                features=features,
             )
-        except (run.ProvenanceError, cost.CostRefused, ValueError) as error:
+        except (
+            feature_cache.CacheError,
+            records.LeakError,
+            run.ProvenanceError,
+            cost.CostRefused,
+            ValueError,
+        ) as error:
             raise SystemExit(f"refusing to launch: {error}") from error
         print(
             json.dumps(
                 {
                     "dry_run": args.dry_run,
-                    "missing_inputs": missing,
+                    "features": {"cache": features.cache, "files": len(files)},
                     "estimate": asdict(plan.estimate),
                     "request": plan.request,
                 },

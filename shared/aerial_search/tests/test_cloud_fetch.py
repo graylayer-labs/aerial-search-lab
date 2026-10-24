@@ -26,14 +26,21 @@ def run_git(cwd: Path, *args: str) -> str:
 # --- fetching a finished job ------------------------------------------------------
 
 
-def job_session(record: dict[str, Any]) -> Any:
-    """A fake AWS session whose finished job wrote one run with `record`."""
+def job_session(
+    record: dict[str, Any],
+    path: str = "r-a1/run.json",
+    more: dict[str, dict[str, Any]] | None = None,
+) -> Any:
+    """A fake AWS session whose finished job wrote one run with `record`, plus
+    a record at each path in `more`."""
     payload = io.BytesIO()
+    entries = {path: record, **(more or {})}
     with tarfile.open(fileobj=payload, mode="w:gz") as tar:
-        data = json.dumps(record).encode()
-        info = tarfile.TarInfo("r-a1/run.json")
-        info.size = len(data)
-        tar.addfile(info, io.BytesIO(data))
+        for name, body in entries.items():
+            data = json.dumps(body).encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
 
     class S3:
         def download_file(self, bucket: str, key: str, filename: str) -> None:
@@ -140,3 +147,58 @@ def test_fetch_refuses_a_normal_run_whose_commit_is_not_on_origin_main(
     assert not list(out.iterdir())
     scratch = {**attested_record(repo, scratch=True), "scratch": True}
     assert launcher.fetch("ssl-aerial-exp-1", job_session(scratch), out, repo=repo)
+
+
+# --- runs at any depth (#191 review) ----------------------------------------------
+
+NESTED = "detection-head/m-1024tok/rgb-a1/run.json"
+
+
+def test_fetch_verifies_a_run_nested_below_the_top_folder(
+    repo: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "outputs"
+    out.mkdir()
+    forged = attested_record(repo)
+    forged["commit"] = forged["attestation"]["commit"] = "f" * 40
+    with pytest.raises(run_module.ProvenanceError):
+        launcher.fetch("ssl-aerial-exp-1", job_session(forged, NESTED), out, repo=repo)
+    assert not list(out.iterdir())
+
+
+def test_fetch_verifies_a_run_nested_inside_a_verified_one(
+    repo: Path, tmp_path: Path
+) -> None:
+    # a valid outer record must not vouch for a forged one beneath it
+    out = tmp_path / "outputs"
+    out.mkdir()
+    forged = attested_record(repo)
+    forged["commit"] = forged["attestation"]["commit"] = "f" * 40
+    session = job_session(attested_record(repo), more={"r-a1/inner/run.json": forged})
+    with pytest.raises(run_module.ProvenanceError):
+        launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
+    assert not list(out.iterdir())
+
+
+def test_fetch_into_an_existing_parent_moves_and_records_the_run(
+    repo: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "outputs"
+    (out / "detection-head" / "m-1024tok" / "older").mkdir(parents=True)
+    session = job_session(attested_record(repo), NESTED)
+    directories = launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
+    run = out / "detection-head" / "m-1024tok" / "rgb-a1"
+    assert directories == [run]
+    assert json.loads((run / "cloud-job.json").read_text())["BillableTimeInSeconds"]
+    assert (out / "detection-head" / "m-1024tok" / "older").is_dir()
+    with pytest.raises(FileExistsError, match="rgb-a1"):
+        launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
+
+
+def test_fetch_refuses_an_output_with_no_run(repo: Path, tmp_path: Path) -> None:
+    out = tmp_path / "outputs"
+    out.mkdir()
+    session = job_session(attested_record(repo), "r-a1/notes.json")
+    with pytest.raises(run_module.ProvenanceError, match="no run.json"):
+        launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
+    assert not list(out.iterdir())
