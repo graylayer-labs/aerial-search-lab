@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from aerial_search import run as run_module
-from aerial_search.cloud import cost, safe_name, source
+from aerial_search.cloud import cost, plain_cache_name, safe_name, source
 
 REGION = "eu-west-1"
 BUCKET = "ssl-aerial-person-detection-data-eu-west1"
@@ -402,6 +402,11 @@ def launch(
     instance = cost.limits(
         instance_type, spot=spot, max_runtime_hours=max_runtime_hours
     )
+    if features is not None and not plain_cache_name(features.cache):
+        raise ValueError(  # the job would refuse it after the upload
+            f"the cache name {features.cache!r} is not <parent>/<directory> of "
+            "plain names; rename the cache directory"
+        )
     state = run_module.code_state(scratch=scratch, repo=repo)
     commit = state["commit"]
     if not commit or state["dirty"] or state["hidden_changes"]:
