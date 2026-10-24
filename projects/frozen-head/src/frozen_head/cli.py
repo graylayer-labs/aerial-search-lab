@@ -10,6 +10,137 @@ from pathlib import Path
 from aerial_search import cli as shared
 
 HELP = shared.PROJECT_COMMANDS
+CPU_INSTANCE = "ml.m5.xlarge"  # the only CPU instance with a verified price
+# train-head flags that sagemaker-train-head passes on to the job, in order
+HEAD_FLAG_NAMES = [
+    "percent",
+    "seed",
+    "steps",
+    "batch_size",
+    "eval_every",
+    "upsample",
+    "hidden",
+    "top_k",
+    "learning_rate",
+    "weight_decay",
+    "device",
+    "input_handling",
+    "micro_batch",
+    "eval_batch",
+    "stem_hidden",
+    "validation_stride",
+    "loss_scale",
+    "fold",
+]
+
+
+def head_args(args: argparse.Namespace) -> list[str]:
+    """The `train-head` arguments the job runs, from `sagemaker-train-head`'s."""
+    out = [args.camera]
+    for name in HEAD_FLAG_NAMES:
+        if getattr(args, name) is not None:  # an unset flag keeps its default
+            out += ["--" + name.replace("_", "-"), str(getattr(args, name))]
+    return [*out, "--scratch"] if args.scratch else out
+
+
+def missing_inputs(args: argparse.Namespace) -> list[str]:
+    """What the job needs that the launcher cannot send yet (#188)."""
+    return [
+        f"features: the feature cache {args.cache} as an input channel; the job "
+        "has no way to read it yet"
+    ]
+
+
+def _add_cloud_flags(cloud: argparse.ArgumentParser) -> None:
+    cloud.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="build and print the whole job request and the cost estimate; "
+        "call no AWS API",
+    )
+    cloud.add_argument("--attempt", type=int, default=1, help="as sagemaker-train")
+    cloud.add_argument(
+        "--max-runtime-hours", type=float, default=2.0, help="at most 2 on CPU"
+    )
+    cloud.add_argument("--max-wait-hours", type=float, default=4.0)
+    cloud.add_argument(
+        "--expected-hours", type=shared._positive_hours, help="for the estimate"
+    )
+    cloud.add_argument("--eur-per-usd", type=float, help="the guard's rate")
+    cloud.add_argument(
+        "--month-to-date-eur",
+        type=float,
+        help="this month's SageMaker spend so far (default: Cost Explorer)",
+    )
+    cloud.add_argument("--image-uri", help="training container (default: pinned)")
+    cloud.add_argument("--role-arn", help="execution role (default: the project's)")
+
+
+def add_head_flags(head: argparse.ArgumentParser, *, cloud: bool) -> None:
+    """The `train-head` flags; `cloud` leaves out the paths the job would set
+    (`--manifests` and `--cache` stay: the launcher reads them here)."""
+    head.add_argument("camera", choices=["rgb", "thermal"])
+    head.add_argument("--percent", type=int, choices=shared.PERCENTS, required=True)
+    head.add_argument("--seed", type=int, default=shared.SEED)
+    head.add_argument(
+        "--cache",
+        type=Path,
+        default=Path("outputs/features/siglip2-base-naflex-1024tok"),
+        help="feature cache directory; only read",
+    )
+    if not cloud:
+        head.add_argument(
+            "--data-root", type=Path, default=Path("data/raw/wisard-full")
+        )
+    head.add_argument(
+        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
+    )
+    from frozen_head.head_experiment import Recipe
+    from frozen_head.stem_experiment import StemRecipe
+
+    defaults = Recipe()
+    for name in ("steps", "batch_size", "eval_every", "upsample", "hidden", "top_k"):
+        flag = "--" + name.replace("_", "-")
+        head.add_argument(flag, type=int, default=getattr(defaults, name))
+    head.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
+    head.add_argument("--weight-decay", type=float, default=defaults.weight_decay)
+    head.add_argument(
+        "--device",
+        default="cpu" if cloud else None,
+        help="default: mps if available, else cpu; the CPU job's is cpu",
+    )
+    head.add_argument(
+        "--input-handling",
+        choices=["replicate", "equalise", "stem"],
+        help="thermal input arm (#68). replicate and equalise are read from "
+        "--cache and this only checks it; stem trains a learned input stem "
+        "before the frozen backbone and takes its geometry from the replicate "
+        "--cache (thermal only; slow: see docs/thermal-input-ablation.md)",
+    )
+    if not cloud:
+        head.add_argument(
+            "--init-head",
+            type=Path,
+            metavar="RUN_DIR",
+            help="warm start (#68): begin from the trained head of this finished "
+            "arm-A run (same fold, percent, camera and seed; it must have saved "
+            "head.pt). Use it with --steps 120 for the stem arm and for its "
+            "matched control, so the two differ only in the stem",
+        )
+    stem_defaults = StemRecipe()
+    for name in ("micro_batch", "eval_batch", "stem_hidden", "validation_stride"):
+        flag = "--" + name.replace("_", "-")
+        head.add_argument(
+            flag, type=int, default=getattr(stem_defaults, name), help="stem arm only"
+        )
+    head.add_argument(
+        "--loss-scale",
+        type=float,
+        default=stem_defaults.loss_scale,
+        help="stem arm only",
+    )
+    shared._add_fold_flag(head)
+    shared._add_run_flags(head)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,60 +197,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shared._add_run_flags(cache)
     head = commands.add_parser("train-head", help=HELP["train-head"].help)
-    head.add_argument("camera", choices=["rgb", "thermal"])
-    head.add_argument("--percent", type=int, choices=shared.PERCENTS, required=True)
-    head.add_argument("--seed", type=int, default=shared.SEED)
-    head.add_argument(
-        "--cache",
-        type=Path,
-        default=Path("outputs/features/siglip2-base-naflex-1024tok"),
-        help="feature cache directory; only read",
+    add_head_flags(head, cloud=False)
+    cloud = commands.add_parser(
+        "sagemaker-train-head", help=HELP["sagemaker-train-head"].help
     )
-    head.add_argument("--data-root", type=Path, default=Path("data/raw/wisard-full"))
-    head.add_argument(
-        "--manifests", type=Path, default=Path("data/manifests/wisard-full")
-    )
-    from frozen_head.head_experiment import Recipe
-    from frozen_head.stem_experiment import StemRecipe
-
-    defaults = Recipe()
-    for name in ("steps", "batch_size", "eval_every", "upsample", "hidden", "top_k"):
-        flag = "--" + name.replace("_", "-")
-        head.add_argument(flag, type=int, default=getattr(defaults, name))
-    head.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
-    head.add_argument("--weight-decay", type=float, default=defaults.weight_decay)
-    head.add_argument("--device", help="default: mps if available, else cpu")
-    head.add_argument(
-        "--input-handling",
-        choices=["replicate", "equalise", "stem"],
-        help="thermal input arm (#68). replicate and equalise are read from "
-        "--cache and this only checks it; stem trains a learned input stem "
-        "before the frozen backbone and takes its geometry from the replicate "
-        "--cache (thermal only; slow: see docs/thermal-input-ablation.md)",
-    )
-    head.add_argument(
-        "--init-head",
-        type=Path,
-        metavar="RUN_DIR",
-        help="warm start (#68): begin from the trained head of this finished "
-        "arm-A run (same fold, percent, camera and seed; it must have saved "
-        "head.pt). Use it with --steps 120 for the stem arm and for its matched "
-        "control, so the two differ only in the stem",
-    )
-    stem_defaults = StemRecipe()
-    for name in ("micro_batch", "eval_batch", "stem_hidden", "validation_stride"):
-        flag = "--" + name.replace("_", "-")
-        head.add_argument(
-            flag, type=int, default=getattr(stem_defaults, name), help="stem arm only"
-        )
-    head.add_argument(
-        "--loss-scale",
-        type=float,
-        default=stem_defaults.loss_scale,
-        help="stem arm only",
-    )
-    shared._add_fold_flag(head)
-    shared._add_run_flags(head)
+    add_head_flags(cloud, cloud=True)
+    _add_cloud_flags(cloud)
     return parser
 
 
@@ -224,3 +307,49 @@ def main(argv: list[str]) -> None:
             raise SystemExit(f"refusing to start: {error}") from error
         print(json.dumps(summary, indent=2))
         return
+
+    if args.command == "sagemaker-train-head":
+        from aerial_search import run
+        from aerial_search.cloud import cost, launcher
+        from frozen_head import head_experiment
+
+        missing = missing_inputs(args)
+        if missing and not args.dry_run:
+            raise SystemExit(f"refusing to launch: no input for {'; '.join(missing)}")
+        logical = args.run_name or head_experiment.default_run_name(
+            args.cache, args.camera, args.fold, args.percent, args.seed
+        )
+        try:
+            plan = launcher.launch(
+                repo=None,
+                logical_run=logical,
+                baseline_args=head_args(args),
+                manifests=args.manifests,
+                scratch=args.scratch,
+                attempt=args.attempt,
+                spot=True,
+                max_runtime_hours=args.max_runtime_hours,
+                max_wait_hours=args.max_wait_hours,
+                expected_hours=args.expected_hours or cost.EXPECTED_HOURS_OTHER,
+                eur_per_usd=args.eur_per_usd or cost.EUR_PER_USD,
+                month_to_date_eur=args.month_to_date_eur,
+                role_arn=args.role_arn,
+                image_uri=args.image_uri,
+                dry_run=args.dry_run,
+                session_factory=shared._aws_session,
+                instance_type=CPU_INSTANCE,
+                command="train-head",
+            )
+        except (run.ProvenanceError, cost.CostRefused, ValueError) as error:
+            raise SystemExit(f"refusing to launch: {error}") from error
+        print(
+            json.dumps(
+                {
+                    "dry_run": args.dry_run,
+                    "missing_inputs": missing,
+                    "estimate": asdict(plan.estimate),
+                    "request": plan.request,
+                },
+                indent=2,
+            )
+        )
