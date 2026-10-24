@@ -9,6 +9,36 @@ it overlaps the true box by at least a quarter; **`ap_iou50`** needs half.
 A **fold** is one test: it holds out one site on one day that the model never
 trained on. **Frozen** means the model's weights are not changed.
 
+## 2026-10-24 · Frozen-head training can be sent to a small CPU cloud job
+
+AWS has not granted a GPU quota, partly because the account shows little use.
+`aerial-search sagemaker-train-head` now sends the frozen-head training to a
+CPU machine (ml.m5.xlarge) on spot, capped at 2 h per job and EUR 5 a month,
+which the owner approved on 2026-10-23. The job cannot see the laptop's
+feature cache, so one camera's cached features (14,844 files) are uploaded to
+S3 under a name taken from their content hash, and the job checks that hash
+before it trains; `run.json` records it. Review found that `sagemaker-fetch`
+checked a run's commit only when its record sat at the top of the job's
+output; it now checks every record at any depth, and a test pins it. A dry
+run on `main` against the real cache prices a job at about EUR 0.12, at most
+EUR 0.49.
+Result: none yet. The first CPU job waits on the role change and the CPU
+quota.
+Links: [#184](https://github.com/graylayer-labs/aerial-search-lab/issues/184), [#188](https://github.com/graylayer-labs/aerial-search-lab/issues/188), [#191](https://github.com/graylayer-labs/aerial-search-lab/issues/191), [CHANGELOG](../CHANGELOG.md).
+
+## 2026-10-23 · The repo became a lab of approaches with one shared evaluation
+
+The repo is renamed `aerial-search-lab` and reshaped as a uv workspace: the
+data, site-day folds, frame selection, metrics, run records and cloud
+launcher live in `shared/`, and each approach has its own folder under
+`projects/` (the fine-tuned detector, which is the bar, and the frozen head),
+with `projects/_template` for the next one. Commands keep their names, in a
+cloud job too. Moved files were checked to be identical or changed only in
+their imports, and every command's flags and every results table came out
+byte-identical. Guard tests stop shared code from importing a project and
+check that every lookup of the repo root lands on the right folder.
+Links: [#160](https://github.com/graylayer-labs/aerial-search-lab/issues/160), [README](../README.md#approaches), [`projects/README.md`](../projects/README.md).
+
 ## 2026-10-15 · A training run can now be sent to a cloud GPU, with a spending cap
 
 Before, every run needed the laptop open. `aerial-search sagemaker-train` now
