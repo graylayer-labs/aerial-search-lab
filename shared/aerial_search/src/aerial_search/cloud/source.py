@@ -34,14 +34,42 @@ def _counts(path: str) -> bool:
     )
 
 
-def digest_files(files: Iterable[tuple[str, bool, bytes]]) -> str:
-    """SHA-256 over sorted (path, executable, content SHA-256) lines."""
+def _digest_hashes(files: Iterable[tuple[str, bool, str]]) -> str:
     lines = sorted(
-        f"{path}\0{'x' if executable else '-'}\0{hashlib.sha256(data).hexdigest()}\n"
-        for path, executable, data in files
+        f"{path}\0{'x' if executable else '-'}\0{sha256}\n"
+        for path, executable, sha256 in files
         if _counts(path)
     )
     return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
+def digest_files(files: Iterable[tuple[str, bool, bytes]]) -> str:
+    """SHA-256 over sorted (path, executable, content SHA-256) lines."""
+    return _digest_hashes(
+        (path, executable, hashlib.sha256(data).hexdigest())
+        for path, executable, data in files
+    )
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def digest_paths(root: Path, relative: Iterable[str]) -> str:
+    """The digest of these files under `root`, as `digest_dir` of a directory
+    holding only them. Read in chunks: the feature cache is gigabytes."""
+    return _digest_hashes(
+        (
+            name,
+            bool((root / name).stat().st_mode & 0o111),
+            _file_sha256(root / name),
+        )
+        for name in relative
+    )
 
 
 def digest_dir(root: Path) -> str:
@@ -52,10 +80,8 @@ def digest_dir(root: Path) -> str:
             path = Path(directory) / name
             if path.is_symlink() or not path.is_file():
                 continue
-            relative = path.relative_to(root).as_posix()
-            executable = bool(path.stat().st_mode & 0o111)
-            files.append((relative, executable, path.read_bytes()))
-    return digest_files(files)
+            files.append(path.relative_to(root).as_posix())
+    return digest_paths(root, files)
 
 
 def archive_commit(repo: Path, commit: str) -> tuple[bytes, str]:

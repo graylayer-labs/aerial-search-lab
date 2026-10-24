@@ -51,6 +51,27 @@ def missing_inputs(args: argparse.Namespace) -> list[str]:
     ]
 
 
+def _rate(text: str) -> float:
+    """A EUR per USD rate no lower than the guard's, which errs high on purpose:
+    a lower one would let the guard price a job below what it may cost."""
+    from aerial_search.cloud import cost
+
+    value = float(text)
+    if not value >= cost.EUR_PER_USD:  # also refuses nan
+        raise argparse.ArgumentTypeError(
+            f"{text} is below the guard's {cost.EUR_PER_USD} EUR per USD"
+        )
+    return value
+
+
+def _spend(text: str) -> float:
+    """Spend so far, in euros: zero or more."""
+    value = float(text)
+    if not value >= 0:  # also refuses nan
+        raise argparse.ArgumentTypeError(f"{text} EUR spent is not zero or more")
+    return value
+
+
 def _add_cloud_flags(cloud: argparse.ArgumentParser) -> None:
     cloud.add_argument(
         "--dry-run",
@@ -66,10 +87,12 @@ def _add_cloud_flags(cloud: argparse.ArgumentParser) -> None:
     cloud.add_argument(
         "--expected-hours", type=shared._positive_hours, help="for the estimate"
     )
-    cloud.add_argument("--eur-per-usd", type=float, help="the guard's rate")
+    cloud.add_argument(
+        "--eur-per-usd", type=_rate, help="the guard's rate; no lower than 0.95"
+    )
     cloud.add_argument(
         "--month-to-date-eur",
-        type=float,
+        type=_spend,
         help="this month's SageMaker spend so far (default: Cost Explorer)",
     )
     cloud.add_argument("--image-uri", help="training container (default: pinned)")

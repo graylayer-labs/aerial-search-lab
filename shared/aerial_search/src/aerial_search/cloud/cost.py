@@ -57,7 +57,10 @@ INSTANCES = {
         ON_DEMAND_USD_PER_HOUR, SPOT_USD_PER_HOUR, RUN_LIMIT_EUR, MONTH_LIMIT_EUR
     ),
     # Spot priced at on demand: AWS publishes no SageMaker spot price, and
-    # spot never costs more. The run limit is the month cap; 2 h binds first.
+    # spot never costs more. The run limit, set to the month cap, never binds:
+    # the 2 h cap holds the worst case to USD 0.514 (EUR 0.49 at 0.95), and it
+    # would pass EUR 5 only at a rate above 9.7 EUR per USD. The month cap and
+    # the 2 h cap are the CPU limits that act.
     "ml.m5.xlarge": Instance(
         CPU_ON_DEMAND_USD_PER_HOUR,
         CPU_ON_DEMAND_USD_PER_HOUR,

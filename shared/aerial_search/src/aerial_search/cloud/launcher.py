@@ -83,6 +83,45 @@ def constraints_prefix(constraints_sha256: str) -> str:
     return f"sagemaker/inputs/constraints/{constraints_sha256[:16]}/"
 
 
+FEATURES_ENV = "AERIAL_SEARCH_FEATURES"
+
+
+@dataclass(frozen=True)
+class Features:
+    """Files of a feature cache that a job reads as its `features` channel.
+
+    `root` is the cache directory; `files` are paths relative to it. The job
+    gets the cache's parent and own directory names (`cache`), so a run reads
+    it under the same names as on the laptop (#191)."""
+
+    root: Path
+    files: tuple[str, ...]
+
+    @property
+    def cache(self) -> str:
+        return f"{self.root.parent.name}/{self.root.name}"
+
+
+def features_prefix(cache: str, features_sha256: str) -> str:
+    """Content-addressed like the manifests: one prefix per cache and digest."""
+    name = safe_name(Path(cache).name)
+    return f"sagemaker/inputs/features/{name}/{features_sha256[:16]}/"
+
+
+def _channel(name: str, uri: str, mode: str = "File") -> dict[str, Any]:
+    return {
+        "ChannelName": name,
+        "InputMode": mode,
+        "DataSource": {
+            "S3DataSource": {
+                "S3DataType": "S3Prefix",
+                "S3Uri": uri,
+                "S3DataDistributionType": "FullyReplicated",
+            }
+        },
+    }
+
+
 def build_request(
     *,
     logical_run: str,
@@ -101,8 +140,15 @@ def build_request(
     now: datetime | None = None,
     instance_type: str = INSTANCE_TYPE,
     command: str = DEFAULT_COMMAND,
+    features_cache: str | None = None,
+    features_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """The `CreateTrainingJob` request. Pure: nothing is read or sent."""
+    """The `CreateTrainingJob` request. Pure: nothing is read or sent.
+
+    With `features_cache` and `features_sha256`, a `features` channel and its
+    digest in `AERIAL_SEARCH_FEATURES`, which the job verifies and adds to the
+    attestation it records. Not in the attestation variable itself: with the
+    digest that would pass the 512-character limit."""
     if spot and max_wait_hours < max_runtime_hours:
         raise ValueError(
             f"max wait {max_wait_hours} h must be at least the max runtime "
@@ -210,6 +256,13 @@ def build_request(
         request["EnableManagedSpotTraining"] = True
     if command != DEFAULT_COMMAND:  # the GPU request stays as it was
         request["Environment"]["AERIAL_SEARCH_COMMAND"] = command
+    if features_cache is not None and features_sha256 is not None:
+        request["InputDataConfig"].append(
+            _channel("features", _s3(features_prefix(features_cache, features_sha256)))
+        )
+        request["Environment"][FEATURES_ENV] = json.dumps(
+            {"features_sha256": features_sha256, "cache": features_cache}
+        )
     for key, value in request["Environment"].items():
         if len(value) > 512:
             raise ValueError(f"environment variable {key} is over 512 characters")
@@ -226,6 +279,8 @@ class Plan:
     manifests_prefix: str
     constraints: bytes
     constraints_key: str
+    features: Features | None = None
+    features_prefix: str | None = None
 
 
 def check_manifests(manifests: Path, scratch: bool) -> None:
@@ -284,23 +339,33 @@ def _exists(s3: Any, key: str) -> bool:
     return True
 
 
+def _upload_files(s3: Any, root: Path, files: list[str], prefix: str) -> None:
+    """Each file under `prefix`, then the marker; skipped if the marker is
+    there (the prefix names the content's digest)."""
+    marker = prefix + source.MARKER
+    if not _exists(s3, marker):
+        for name in files:
+            s3.upload_file(str(root / name), BUCKET, prefix + name)
+        s3.put_object(Bucket=BUCKET, Key=marker, Body=b"")
+
+
 def _upload(plan: Plan, s3: Any) -> None:
-    """Content-addressed uploads: the source and the manifests are skipped if
-    already there. Only `sagemaker/` is written."""
+    """Content-addressed uploads: the source, the manifests and the features
+    are skipped if already there. Only `sagemaker/` is written."""
     if not _exists(s3, plan.source_key):
         s3.put_object(Bucket=BUCKET, Key=plan.source_key, Body=plan.archive)
     if not _exists(s3, plan.constraints_key):
         s3.put_object(Bucket=BUCKET, Key=plan.constraints_key, Body=plan.constraints)
-    marker = plan.manifests_prefix + source.MARKER
-    if not _exists(s3, marker):
-        for path in sorted(plan.manifests_dir.rglob("*")):
-            if path.is_file():
-                key = (
-                    plan.manifests_prefix
-                    + path.relative_to(plan.manifests_dir).as_posix()
-                )
-                s3.upload_file(str(path), BUCKET, key)
-        s3.put_object(Bucket=BUCKET, Key=marker, Body=b"")
+    manifests = [
+        path.relative_to(plan.manifests_dir).as_posix()
+        for path in sorted(plan.manifests_dir.rglob("*"))
+        if path.is_file()
+    ]
+    _upload_files(s3, plan.manifests_dir, manifests, plan.manifests_prefix)
+    if plan.features is not None and plan.features_prefix is not None:
+        _upload_files(
+            s3, plan.features.root, list(plan.features.files), plan.features_prefix
+        )
 
 
 def launch(
@@ -327,11 +392,13 @@ def launch(
     list_running: Callable[[Any], list[dict[str, Any]]] | None = None,
     instance_type: str = INSTANCE_TYPE,
     command: str = DEFAULT_COMMAND,
+    features: Features | None = None,
 ) -> Plan:
     """Check everything, build the job, and send it unless `dry_run`.
 
     `instance_type` must be on the cost guard's list, which sets its prices
-    and limits; `command` is the `aerial-search` command the job runs."""
+    and limits; `command` is the `aerial-search` command the job runs;
+    `features`, checked by the caller, become the job's `features` channel."""
     instance = cost.limits(
         instance_type, spot=spot, max_runtime_hours=max_runtime_hours
     )
@@ -378,6 +445,9 @@ def launch(
     manifests_digest = source.digest_dir(manifests)
     constraints = export_constraints(code_root)
     constraints_digest = hashlib.sha256(constraints).hexdigest()
+    features_digest = (
+        None if features is None else source.digest_paths(features.root, features.files)
+    )
     if role_arn is None and session is not None:
         account = session.client("sts", region_name=REGION).get_caller_identity()[
             "Account"
@@ -399,6 +469,8 @@ def launch(
         image_uri=image_uri,
         instance_type=instance_type,
         command=command,
+        features_cache=None if features is None else features.cache,
+        features_sha256=features_digest,
     )
     plan = Plan(
         request,
@@ -409,6 +481,10 @@ def launch(
         f"sagemaker/inputs/manifests/{manifests_digest[:16]}/",
         constraints,
         constraints_prefix(constraints_digest) + "constraints.txt",
+        features,
+        None
+        if features is None or features_digest is None
+        else features_prefix(features.cache, features_digest),
     )
     if session is not None:
         _upload(plan, session.client("s3", region_name=REGION))

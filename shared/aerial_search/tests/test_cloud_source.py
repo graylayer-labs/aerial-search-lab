@@ -52,3 +52,18 @@ def test_bytecode_and_the_outputs_directory_do_not_count(
     (tmp_path / "code" / "outputs" / "r").mkdir(parents=True)
     (tmp_path / "code" / "outputs" / "r" / "run.json").write_text("{}")
     assert source.digest_dir(tmp_path / "code") == digest
+
+
+def test_the_digest_of_chosen_files_equals_the_digest_of_a_copy_of_them(
+    tmp_path: Path,
+) -> None:
+    # The launcher hashes part of the feature cache in place; the job hashes
+    # the channel it received, which holds that part only (#191).
+    whole, part = tmp_path / "whole", tmp_path / "part"
+    files = {"cache.json": b"{}", "features/a/b.npy": b"\1" * (3 << 20)}
+    for root, names in ((whole, [*files, "features/c/d.npy"]), (part, list(files))):
+        for name in names:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_bytes(files.get(name, b"other"))
+    assert source.digest_paths(whole, sorted(files)) == source.digest_dir(part)
+    assert source.digest_dir(whole) != source.digest_dir(part)
