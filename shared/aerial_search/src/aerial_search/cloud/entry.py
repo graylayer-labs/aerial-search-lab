@@ -3,6 +3,9 @@
 The same code path as the laptop: `aerial-search train-baseline` with the
 launcher's flags, plus the job's own paths, `--checkpoint-dir
 /opt/ml/checkpoints` and a per-attempt run name (`<run>-a<n>-<UTC time>`).
+A CPU `train-head` job (#191) gets `--cache`, the `features` channel
+verified against its digest and linked under the cache's own names, in
+place of the checkpoint directory.
 
 Provenance without git. The launcher verified the tree and `origin/main` on
 the laptop and archived exactly that commit. It sent two digests in the job's
@@ -53,6 +56,14 @@ CONSTRAINTS = Path("/opt/ml/input/data/constraints/constraints.txt")
 CHECKPOINTS = Path("/opt/ml/checkpoints")
 OUTPUT = Path("/opt/ml/output/data")  # uploaded as output.tar.gz, even on failure
 PROVIDED = ("torch", "torchvision")  # in the container; not reinstalled
+FEATURES = Path("/opt/ml/input/data/features")  # train-head's feature cache
+# Where the cache is linked under its own parent and directory names, so a
+# run reads it as on the laptop. Outside the code's outputs/, which is copied
+# out at the end and would copy the whole cache through the link.
+FEATURE_LINKS = Path("/opt/ml/feature-links")
+ATTESTATION_ENV = "AERIAL_SEARCH_ATTESTATION"
+FEATURES_ENV = "AERIAL_SEARCH_FEATURES"  # as the launcher's
+_PLAIN = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class JobRefused(RuntimeError):
@@ -89,10 +100,16 @@ def prepare(
     manifests: Path,
     constraints: Path,
     checkpoint_dir: Path,
+    features: Path = FEATURES,
+    feature_links: Path = FEATURE_LINKS,
 ) -> list[str]:
-    """Verify the code and manifests; return the `aerial-search` arguments."""
+    """Verify the code and inputs; return the `aerial-search` arguments.
+
+    `train-baseline` gets the dataset, manifests and checkpoint directory;
+    `train-head` gets the dataset, manifests and the verified feature cache,
+    linked under its own names in `feature_links`."""
     try:
-        attestation = json.loads(environ["AERIAL_SEARCH_ATTESTATION"])
+        attestation = json.loads(environ[ATTESTATION_ENV])
         baseline_args = json.loads(environ["AERIAL_SEARCH_BASELINE_ARGS"])
         logical_run = environ["AERIAL_SEARCH_LOGICAL_RUN"]
     except (KeyError, ValueError) as error:
@@ -100,10 +117,14 @@ def prepare(
     if not environ.get("TRAINING_JOB_NAME"):
         raise JobRefused("not inside a SageMaker training job (no TRAINING_JOB_NAME)")
     command = environ.get("AERIAL_SEARCH_COMMAND", "train-baseline")
-    if command != "train-baseline":
+    if command not in ("train-baseline", "train-head"):
         raise JobRefused(
-            f"the job has no inputs for {command!r} yet; only train-baseline runs "
-            "in a job (#188)"
+            f"the job has no inputs for {command!r}; only train-baseline and "
+            "train-head run in a job"
+        )
+    if command == "train-head" and FEATURES_ENV not in environ:
+        raise JobRefused(
+            f"train-head needs its feature cache, but {FEATURES_ENV} is unset"
         )
     actual = source.digest_dir(code_root)
     if actual != attestation.get("source_sha256"):
@@ -128,6 +149,20 @@ def prepare(
             f"the constraints in {constraints} ({actual}) are not the ones the "
             f"launcher sent ({attestation.get('constraints_sha256')})"
         )
+    if command == "train-head":
+        cache = _linked_cache(environ, features, feature_links)
+        return [
+            "train-head",
+            *baseline_args,
+            "--data-root",
+            str(data_root),
+            "--manifests",
+            str(manifests),
+            "--cache",
+            str(cache),
+            "--run-name",
+            attempt_run_name(logical_run, checkpoint_dir),
+        ]
     return [
         "train-baseline",
         *baseline_args,
@@ -140,6 +175,49 @@ def prepare(
         "--run-name",
         attempt_run_name(logical_run, checkpoint_dir),
     ]
+
+
+def _sent_features(environ: Mapping[str, str]) -> tuple[str, str]:
+    """The features digest and cache names the launcher sent."""
+    try:
+        sent = json.loads(environ[FEATURES_ENV])
+        digest, cache = str(sent["features_sha256"]), str(sent["cache"])
+    except (KeyError, ValueError, TypeError) as error:
+        raise JobRefused(f"unreadable {FEATURES_ENV}: {error!r}") from None
+    parts = cache.split("/")
+    if len(parts) != 2 or not all(_PLAIN.fullmatch(p) and p != ".." for p in parts):
+        raise JobRefused(f"the cache name {cache!r} is not <parent>/<directory>")
+    return digest, cache
+
+
+def _linked_cache(
+    environ: Mapping[str, str], features: Path, feature_links: Path
+) -> Path:
+    """Verify the features channel and link it as `<links>/<parent>/<cache>`."""
+    digest, cache = _sent_features(environ)
+    actual = source.digest_dir(features)
+    if actual != digest:
+        raise JobRefused(
+            f"the features in {features} ({actual}) are not the ones the "
+            f"launcher sent ({digest})"
+        )
+    link = feature_links / cache
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to(features, target_is_directory=True)
+    return link
+
+
+def job_attestation(environ: Mapping[str, str]) -> str:
+    """The attestation the run records: the launcher's, plus the features
+    digest and cache names (sent apart, for the 512-character limit) once
+    `prepare` has verified them."""
+    attestation = json.loads(environ[ATTESTATION_ENV])
+    if FEATURES_ENV in environ:
+        digest, cache = _sent_features(environ)
+        attestation |= {"features_sha256": digest, "features_cache": cache}
+    return json.dumps(attestation)
 
 
 _NAME = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
@@ -239,9 +317,13 @@ def main(environ: Mapping[str, str] | None = None) -> None:
             manifests=MANIFESTS,
             constraints=CONSTRAINTS,
             checkpoint_dir=CHECKPOINTS,
+            features=FEATURES,
+            feature_links=FEATURE_LINKS,
         )
     except JobRefused as error:
         raise SystemExit(f"refusing to run: {error}") from error
+    if FEATURES_ENV in environ:  # start_run reads the attestation from here
+        os.environ[ATTESTATION_ENV] = job_attestation(environ)
     dependencies = _dependencies(CODE_ROOT)
     _install(dependencies, CONSTRAINTS)
     sys.path[:0] = [str(d) for d in source_dirs(CODE_ROOT)]

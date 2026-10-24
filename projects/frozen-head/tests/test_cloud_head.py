@@ -7,6 +7,7 @@ or, worse, run another recipe than the one launched.
 
 import argparse
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -131,6 +132,76 @@ def test_the_guards_rate_and_zero_spend_are_accepted(launched) -> None:
     )
     assert launched["eur_per_usd"] == 0.95
     assert launched["month_to_date_eur"] == 0.0
+
+
+# --- the cache files a job gets (#191) ---------------------------------------------
+
+FOLD = "220109_Baker"
+
+
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def small_cache(tmp_path: Path, top: str = "scratch-features") -> tuple[Path, Path]:
+    """Fold manifests for thermal, and a cache holding them plus an rgb image
+    from another session, which a thermal job does not need."""
+    manifests = tmp_path / "manifests"
+    images: list[str] = []
+    for role in ("train_100pct", "validation", "test"):
+        site = FOLD if role == "test" else "210417_MtErie"
+        records = []
+        for k in range(2):
+            image = f"{site}_Enterprise_IR_1/{role}{k}.jpg"
+            images.append(image)
+            records.append(
+                {"site_day": site, "collection_id": image.split("/")[0]}
+                | {"camera": "thermal", "image": image, "size": [640, 512]}
+                | {"boxes": []}
+            )
+        write_jsonl(manifests / "folds" / FOLD / "thermal" / f"{role}.jsonl", records)
+    cache = tmp_path / "outputs" / top / "m-1024tok"
+    entries = [
+        {"path": image, "camera": "thermal", "image_size": [640, 512]}
+        | {"grid": [14, 18], "run": "s1"}
+        for image in images
+    ] + [{"path": "VIS_1/x.jpg", "camera": "rgb", "grid": [12, 21], "run": "s2"}]
+    write_jsonl(cache / "index.jsonl", entries)
+    (cache / "cache.json").write_text("{}")
+    for session in ("s1", "s2"):
+        (cache / "runs" / session).mkdir(parents=True)
+        (cache / "runs" / session / "run.json").write_text(
+            json.dumps({"scratch": True, "status": "completed"})
+        )
+    for entry in entries:
+        path = cache / "features" / Path(str(entry["path"])).with_suffix(".npy")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"f")
+    return cache, manifests
+
+
+def test_a_job_gets_one_cameras_features_and_their_records(tmp_path: Path) -> None:
+    from frozen_head import head_experiment
+
+    cache, manifests = small_cache(tmp_path)
+    files = head_experiment.job_files(
+        cache, manifests, fold=FOLD, camera="thermal", percent=100, scratch=True
+    )
+    assert files[:3] == ("cache.json", "index.jsonl", "runs/s1/run.json")
+    assert len(files[3:]) == 6
+    assert all(f.startswith("features/") and "_IR_1/" in f for f in files[3:])
+
+
+def test_the_cache_is_checked_as_the_run_would_before_choosing(tmp_path: Path) -> None:
+    from frozen_head import head_experiment
+    from frozen_head.feature_cache import CacheError
+
+    cache, manifests = small_cache(tmp_path)
+    with pytest.raises(CacheError, match="scratch"):
+        head_experiment.job_files(
+            cache, manifests, fold=FOLD, camera="thermal", percent=100, scratch=False
+        )
 
 
 def test_the_command_line_has_no_on_demand_or_instance_flag() -> None:
