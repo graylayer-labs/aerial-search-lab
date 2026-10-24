@@ -99,6 +99,12 @@ def prepare(
         raise JobRefused(f"the job's environment is incomplete: {error!r}") from None
     if not environ.get("TRAINING_JOB_NAME"):
         raise JobRefused("not inside a SageMaker training job (no TRAINING_JOB_NAME)")
+    command = environ.get("AERIAL_SEARCH_COMMAND", "train-baseline")
+    if command != "train-baseline":
+        raise JobRefused(
+            f"the job has no inputs for {command!r} yet; only train-baseline runs "
+            "in a job (#188)"
+        )
     actual = source.digest_dir(code_root)
     if actual != attestation.get("source_sha256"):
         raise JobRefused(
