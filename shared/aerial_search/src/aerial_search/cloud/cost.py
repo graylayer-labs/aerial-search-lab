@@ -46,6 +46,10 @@ class Instance:
     month_limit_eur: float
     max_runtime_hours: float | None = None  # None: only the run limit binds
     spot_only: bool = False  # no IAM condition enforces spot; this does
+    # The spend the month limit counts: None is all SageMaker spend in the
+    # account; else only usage types and running jobs on instances containing
+    # this text (see `month_to_date_eur`).
+    usage_family: str | None = None
 
 
 INSTANCES = {
@@ -61,6 +65,7 @@ INSTANCES = {
         CPU_MONTH_LIMIT_EUR,
         CPU_MAX_RUNTIME_HOURS,
         spot_only=True,
+        usage_family="ml.m5.",  # the EUR 5 is for CPU jobs, not the GPU's spend
     ),
 }
 ON_DEMAND_USD = {name: i.on_demand_usd for name, i in INSTANCES.items()}  # running
@@ -122,27 +127,41 @@ def default_expected_hours(input_mode: str, camera: str) -> float:
     return EXPECTED_HOURS.get((input_mode, camera), EXPECTED_HOURS_OTHER)
 
 
-def month_to_date_eur(ce: Any, *, eur_per_usd: float, today: date) -> float:
+def month_to_date_eur(
+    ce: Any, *, eur_per_usd: float, today: date, usage_family: str | None = None
+) -> float:
     """This month's SageMaker spend for the whole account, from Cost Explorer.
 
     Account-wide, not per project: a tag filter would read zero until the tag
     is activated for cost allocation, which would under-count silently. Data
     lags by up to a day, so a job launched today may not show yet.
+
+    With `usage_family` (the CPU cap, #191), only the SageMaker usage types
+    whose name contains it are summed, grouped by usage type over every page.
+    UNVERIFIED: SageMaker training usage types are taken to name the instance
+    after a colon, such as `EU-Train:ml.m5.xlarge` or a spot variant; the
+    region prefix and spot spelling were not checked against a real bill, so
+    the match is on the instance family alone. Storage usage types name no
+    instance and are left out (about 30 GB for 2 h a job).
     """
+    query: dict[str, Any] = dict(
+        TimePeriod={
+            "Start": today.replace(day=1).isoformat(),
+            "End": (today + timedelta(days=1)).isoformat(),
+        },
+        Granularity="MONTHLY",
+        Metrics=["UnblendedCost"],
+        Filter={"Dimensions": {"Key": "SERVICE", "Values": ["Amazon SageMaker"]}},
+    )
     try:
-        response = ce.get_cost_and_usage(
-            TimePeriod={
-                "Start": today.replace(day=1).isoformat(),
-                "End": (today + timedelta(days=1)).isoformat(),
-            },
-            Granularity="MONTHLY",
-            Metrics=["UnblendedCost"],
-            Filter={"Dimensions": {"Key": "SERVICE", "Values": ["Amazon SageMaker"]}},
-        )
-        usd = sum(
-            float(r["Total"]["UnblendedCost"]["Amount"])
-            for r in response["ResultsByTime"]
-        )
+        if usage_family is None:
+            response = ce.get_cost_and_usage(**query)
+            usd = sum(
+                float(r["Total"]["UnblendedCost"]["Amount"])
+                for r in response["ResultsByTime"]
+            )
+        else:
+            usd = _family_usd(ce, query, usage_family)
     except Exception as error:
         raise CostRefused(
             f"cannot read month-to-date spend from Cost Explorer ({error}); "
@@ -151,19 +170,38 @@ def month_to_date_eur(ce: Any, *, eur_per_usd: float, today: date) -> float:
     return usd * eur_per_usd
 
 
+def _family_usd(ce: Any, query: dict[str, Any], usage_family: str) -> float:
+    usd, token = 0.0, None
+    while True:
+        response = ce.get_cost_and_usage(
+            **query,
+            GroupBy=[{"Type": "DIMENSION", "Key": "USAGE_TYPE"}],
+            **({"NextPageToken": token} if token else {}),
+        )
+        for result in response["ResultsByTime"]:
+            for group in result.get("Groups", []):
+                if any(usage_family in key for key in group["Keys"]):
+                    usd += float(group["Metrics"]["UnblendedCost"]["Amount"])
+        token = response.get("NextPageToken")
+        if not token:
+            return usd
+
+
 def running_jobs_eur(
     jobs: Iterable[dict[str, Any]],
     *,
     eur_per_usd: float,
     prices_usd: dict[str, float] | None = None,
     now: datetime | None = None,
+    usage_family: str | None = None,
 ) -> float:
     """The most the live and just-finished jobs can bill, on-demand price x:
     `MaxRuntimeInSeconds` for a job running or stopping, `BillableTimeInSeconds`
     for one whose `TrainingEndTime` is within `LAG_HOURS` (Cost Explorer lags,
     so month-to-date may lack it; if it has it the job is counted twice, which
     errs safe). A job on an instance with no known price is refused rather
-    than counted as free."""
+    than counted as free. With `usage_family`, only jobs on an instance
+    containing it count (the CPU cap, as in `month_to_date_eur`)."""
     prices = ON_DEMAND_USD if prices_usd is None else prices_usd
     now = now or datetime.now(UTC)
     usd = 0.0
@@ -173,6 +211,8 @@ def running_jobs_eur(
         if not live and not (end and now - end <= timedelta(hours=LAG_HOURS)):
             continue
         instance = job["ResourceConfig"]["InstanceType"]
+        if usage_family is not None and usage_family not in instance:
+            continue
         if instance not in prices:
             raise CostRefused(
                 f"running job {job.get('TrainingJobName')} is on {instance}, "

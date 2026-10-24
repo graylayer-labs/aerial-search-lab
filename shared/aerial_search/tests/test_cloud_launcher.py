@@ -430,6 +430,77 @@ def test_a_cpu_dry_run_is_priced_at_the_m5_rate(repo: Path, tmp_path: Path) -> N
     assert plan.request["ResourceConfig"]["InstanceType"] == "ml.m5.xlarge"
 
 
+class Bucket:
+    """A fake S3 client: an object store in a dict, with every call logged."""
+
+    def __init__(self, keys: set[str] | None = None) -> None:
+        self.keys = set(keys or ())
+        self.calls: list[tuple[str, str]] = []
+
+    def head_object(self, *, Bucket: str, Key: str) -> Any:
+        self.calls.append(("head", Key))
+        if Key not in self.keys:
+            raise launcher.NotFound()
+
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> None:
+        self.calls.append(("put", Key))
+        self.keys.add(Key)
+
+    def upload_file(self, filename: str, bucket: str, key: str) -> None:
+        self.calls.append(("upload", key))
+        self.keys.add(key)
+
+
+class Cloud:
+    """A fake boto3 session: S3, SageMaker, and Cost Explorer pages."""
+
+    def __init__(self, ce_pages: list[dict] | None = None) -> None:
+        self.s3, self.created, self.ce_calls = Bucket(), [], []
+        self.ce_pages = ce_pages or []
+
+    def client(self, name: str, **_: Any) -> Any:
+        cloud = self
+
+        class Sm:
+            def create_training_job(self, **kw: Any) -> Any:
+                cloud.created.append(kw)
+
+        class Ce:
+            def get_cost_and_usage(self, **kw: Any) -> Any:
+                cloud.ce_calls.append(kw)
+                return cloud.ce_pages[len(cloud.ce_calls) - 1]
+
+        return {"s3": self.s3, "sagemaker": Sm(), "ce": Ce()}[name]
+
+
+def test_a_cpu_launch_counts_m5_spend_not_the_gpus(repo: Path, tmp_path: Path) -> None:
+    usage = [
+        {
+            "Keys": ["EU-Train:ml.g4dn.xlarge"],
+            "Metrics": {"UnblendedCost": {"Amount": "50"}},
+        },
+        {
+            "Keys": ["EU-Train-Spot:ml.m5.xlarge"],
+            "Metrics": {"UnblendedCost": {"Amount": "1"}},
+        },
+    ]
+    cloud = Cloud([{"ResultsByTime": [{"Groups": usage}]}])
+    plan = launch(
+        repo,
+        tmp_path,
+        **CPU,
+        expected_hours=0.5,
+        dry_run=False,
+        session_factory=lambda: cloud,
+        month_to_date_eur=None,
+        list_running=lambda session: [running("ml.g4dn.xlarge", 12 * 3600)],
+    )
+    assert plan.estimate.month_to_date_eur == pytest.approx(1.0)
+    assert plan.estimate.running_jobs_eur == 0.0
+    assert "GroupBy" in cloud.ce_calls[0]
+    assert len(cloud.created) == 1
+
+
 @pytest.mark.parametrize(
     ("over", "match"),
     [

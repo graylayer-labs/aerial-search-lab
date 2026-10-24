@@ -349,11 +349,14 @@ def launch(
             session.client("ce", region_name="us-east-1"),
             eur_per_usd=eur_per_usd,
             today=today or datetime.now(UTC).date(),
+            usage_family=instance.usage_family,  # None, all SageMaker, for the GPU
         )
     running_eur = None
     if session is not None:
         running_eur = cost.running_jobs_eur(
-            (list_running or running_jobs)(session), eur_per_usd=eur_per_usd
+            (list_running or running_jobs)(session),
+            eur_per_usd=eur_per_usd,
+            usage_family=instance.usage_family,
         )
     estimate = cost.check(
         expected_hours=expected_hours,
