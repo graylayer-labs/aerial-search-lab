@@ -184,3 +184,62 @@ def test_the_month_check_counts_this_runs_worst_case_not_its_estimate() -> None:
         estimate(eur_per_usd=1.0, month_to_date_eur=51.0)
     e = estimate(eur_per_usd=1.0, month_to_date_eur=40.0)
     assert e.month_total_eur == pytest.approx(40.0 + 0.822 * 12)
+
+
+# --- instances: the GPU limits and the CPU caps (#188) ---------------------------
+
+
+def test_the_gpu_instance_keeps_its_price_and_limits() -> None:
+    gpu = cost.limits("ml.g4dn.xlarge", spot=True, max_runtime_hours=12.0)
+    assert gpu.on_demand_usd == cost.ON_DEMAND_USD_PER_HOUR == 0.822
+    assert gpu.spot_usd == cost.SPOT_USD_PER_HOUR
+    assert (gpu.run_limit_eur, gpu.month_limit_eur) == (15.0, 60.0)
+
+
+def test_the_cpu_instance_is_priced_and_capped() -> None:
+    cpu = cost.limits("ml.m5.xlarge", spot=True, max_runtime_hours=2.0)
+    assert cpu.on_demand_usd == 0.257
+    assert cpu.month_limit_eur == 5.0
+    assert cpu.max_runtime_hours == 2.0
+
+
+@pytest.mark.parametrize("instance", ["ml.m5.large", "ml.p3.2xlarge", ""])
+def test_an_instance_not_on_the_list_is_refused(instance: str) -> None:
+    with pytest.raises(cost.CostRefused, match="not on the list"):
+        cost.limits(instance, spot=True, max_runtime_hours=1.0)
+
+
+def test_a_cpu_job_over_two_hours_is_refused() -> None:
+    with pytest.raises(cost.CostRefused, match="2.0 h"):
+        cost.limits("ml.m5.xlarge", spot=True, max_runtime_hours=2.01)
+
+
+def test_a_cpu_job_must_be_spot() -> None:
+    with pytest.raises(cost.CostRefused, match="spot"):
+        cost.limits("ml.m5.xlarge", spot=False, max_runtime_hours=1.0)
+
+
+def cpu_estimate(**over: Any) -> cost.Estimate:
+    cpu = cost.limits("ml.m5.xlarge", spot=True, max_runtime_hours=2.0)
+    args: dict[str, Any] = dict(
+        expected_hours=0.5,
+        max_runtime_hours=2.0,
+        eur_per_usd=1.0,
+        spot_price_usd=cpu.spot_usd,
+        on_demand_price_usd=cpu.on_demand_usd,
+        run_limit_eur=cpu.run_limit_eur,
+        month_limit_eur=cpu.month_limit_eur,
+    )
+    return estimate(**{**args, **over})
+
+
+def test_the_cpu_month_cap_counts_spend_running_jobs_and_this_run() -> None:
+    e = cpu_estimate(month_to_date_eur=4.0)
+    assert e.month_total_eur == pytest.approx(4.0 + 0.257 * 2)
+    with pytest.raises(cost.CostRefused, match="5 EUR month limit"):
+        cpu_estimate(month_to_date_eur=4.0, running_jobs_eur=0.5)
+
+
+def test_a_running_cpu_job_is_counted_not_refused() -> None:
+    eur = cost.running_jobs_eur([running("ml.m5.xlarge", 7200)], eur_per_usd=1.0)
+    assert eur == pytest.approx(0.257 * 2)

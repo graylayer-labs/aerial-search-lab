@@ -397,3 +397,50 @@ def test_running_jobs_are_listed_in_progress_and_described() -> None:
     assert [j["TrainingJobName"] for j in jobs] == ["a", "b"]
     assert [k.get("StatusEquals") for k in seen] == ["InProgress", "Stopping", None]
     assert seen[2]["LastModifiedTimeAfter"] == now - timedelta(hours=48)
+
+
+# --- the CPU instance (#188) ------------------------------------------------------
+
+
+def test_the_gpu_request_names_no_command_for_the_job() -> None:
+    assert "AERIAL_SEARCH_COMMAND" not in request()["Environment"]
+
+
+def test_a_cpu_request_runs_on_m5_with_the_cpu_image_and_names_its_command() -> None:
+    r = request(
+        instance_type="ml.m5.xlarge", command="train-head", max_runtime_hours=2.0
+    )
+    assert r["ResourceConfig"]["InstanceType"] == "ml.m5.xlarge"
+    assert "-cpu-" in r["AlgorithmSpecification"]["TrainingImage"]
+    assert r["Environment"]["AERIAL_SEARCH_COMMAND"] == "train-head"
+    attestation = json.loads(r["Environment"]["AERIAL_SEARCH_ATTESTATION"])
+    assert attestation["instance_type"] == "ml.m5.xlarge"
+    assert r["EnableManagedSpotTraining"] is True
+
+
+CPU: dict[str, Any] = dict(
+    instance_type="ml.m5.xlarge", max_runtime_hours=2.0, max_wait_hours=4.0
+)
+
+
+def test_a_cpu_dry_run_is_priced_at_the_m5_rate(repo: Path, tmp_path: Path) -> None:
+    plan = launch(repo, tmp_path, **CPU, expected_hours=0.5)
+    assert plan.estimate.price_usd_per_hour == 0.257
+    assert plan.estimate.worst_case_usd == pytest.approx(0.257 * 2)
+    assert plan.request["ResourceConfig"]["InstanceType"] == "ml.m5.xlarge"
+
+
+@pytest.mark.parametrize(
+    ("over", "match"),
+    [
+        (dict(max_runtime_hours=3.0), "cap"),
+        (dict(spot=False), "spot"),
+        (dict(month_to_date_eur=4.6), "5 EUR month limit"),
+        (dict(instance_type="ml.m5.large"), "not on the list"),
+    ],
+)
+def test_the_cpu_limits_refuse_before_anything_is_sent(
+    repo: Path, tmp_path: Path, over: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(cost.CostRefused, match=match):
+        launch(repo, tmp_path, **{**CPU, "expected_hours": 0.5, **over})

@@ -44,6 +44,14 @@ IMAGE_URI = (
     "763104351884.dkr.ecr.eu-west-1.amazonaws.com/pytorch-training:"
     "2.13.0-gpu-py312-cu128-ubuntu22.04-sagemaker"
 )
+# The same container's CPU build, for the CPU instance (#188). UNVERIFIED in
+# the same way: look the tag up in the registry before the first CPU job.
+CPU_IMAGE_URI = (
+    "763104351884.dkr.ecr.eu-west-1.amazonaws.com/pytorch-training:"
+    "2.13.0-cpu-py312-ubuntu22.04-sagemaker"
+)
+IMAGE_URIS = {INSTANCE_TYPE: IMAGE_URI, "ml.m5.xlarge": CPU_IMAGE_URI}
+DEFAULT_COMMAND = "train-baseline"  # what the job runs if the request names none
 ENTRY_POINT = "tools/sagemaker_entry.py"
 CHECKPOINT_LOCAL = "/opt/ml/checkpoints"
 
@@ -91,6 +99,8 @@ def build_request(
     scratch: bool,
     image_uri: str | None = None,
     now: datetime | None = None,
+    instance_type: str = INSTANCE_TYPE,
+    command: str = DEFAULT_COMMAND,
 ) -> dict[str, Any]:
     """The `CreateTrainingJob` request. Pure: nothing is read or sent."""
     if spot and max_wait_hours < max_runtime_hours:
@@ -115,7 +125,7 @@ def build_request(
         "source_sha256": source_sha256,
         "manifests_sha256": manifests_sha256,
         "constraints_sha256": constraints_sha256,
-        "instance_type": INSTANCE_TYPE,
+        "instance_type": instance_type,
         "spot": spot,
         "scratch": scratch,
         "launched_at": now.isoformat(timespec="seconds"),
@@ -123,7 +133,7 @@ def build_request(
     request: dict[str, Any] = {
         "TrainingJobName": name,
         "AlgorithmSpecification": {
-            "TrainingImage": image_uri or IMAGE_URI,
+            "TrainingImage": image_uri or IMAGE_URIS[instance_type],
             "TrainingInputMode": "File",
         },
         "RoleArn": role_arn,
@@ -166,7 +176,7 @@ def build_request(
         ],
         "OutputDataConfig": {"S3OutputPath": _s3("sagemaker/outputs/")},
         "ResourceConfig": {
-            "InstanceType": INSTANCE_TYPE,
+            "InstanceType": instance_type,
             "InstanceCount": 1,
             "VolumeSizeInGB": VOLUME_GB,
         },
@@ -198,6 +208,8 @@ def build_request(
     }
     if spot:
         request["EnableManagedSpotTraining"] = True
+    if command != DEFAULT_COMMAND:  # the GPU request stays as it was
+        request["Environment"]["AERIAL_SEARCH_COMMAND"] = command
     for key, value in request["Environment"].items():
         if len(value) > 512:
             raise ValueError(f"environment variable {key} is over 512 characters")
@@ -309,12 +321,20 @@ def launch(
     image_uri: str | None,
     dry_run: bool,
     session_factory: Callable[[], Any],
-    spot_price_usd: float = cost.SPOT_USD_PER_HOUR,
+    spot_price_usd: float | None = None,  # default: the instance's
     today: date | None = None,
     export_constraints: Callable[[Path], bytes] = source.export_constraints,
     list_running: Callable[[Any], list[dict[str, Any]]] | None = None,
+    instance_type: str = INSTANCE_TYPE,
+    command: str = DEFAULT_COMMAND,
 ) -> Plan:
-    """Check everything, build the job, and send it unless `dry_run`."""
+    """Check everything, build the job, and send it unless `dry_run`.
+
+    `instance_type` must be on the cost guard's list, which sets its prices
+    and limits; `command` is the `aerial-search` command the job runs."""
+    instance = cost.limits(
+        instance_type, spot=spot, max_runtime_hours=max_runtime_hours
+    )
     state = run_module.code_state(scratch=scratch, repo=repo)
     commit = state["commit"]
     if not commit or state["dirty"] or state["hidden_changes"]:
@@ -343,7 +363,10 @@ def launch(
         running_jobs_eur=running_eur,
         month_required=not dry_run,
         eur_per_usd=eur_per_usd,
-        spot_price_usd=spot_price_usd,
+        spot_price_usd=instance.spot_usd if spot_price_usd is None else spot_price_usd,
+        on_demand_price_usd=instance.on_demand_usd,
+        run_limit_eur=instance.run_limit_eur,
+        month_limit_eur=instance.month_limit_eur,
     )
     # The whole repository: the entry point and pyproject.toml sit outside
     # the package, which is where the running code (the CLI default) lives.
@@ -371,6 +394,8 @@ def launch(
         max_wait_hours=max_wait_hours,
         scratch=scratch,
         image_uri=image_uri,
+        instance_type=instance_type,
+        command=command,
     )
     plan = Plan(
         request,

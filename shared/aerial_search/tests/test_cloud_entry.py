@@ -346,3 +346,11 @@ def test_a_name_in_attempts_json_is_never_reused_even_if_counts_disagree(job) ->
     )
     argv = prepare(job, job_env(job["code"], job["manifests"]))
     assert argv[argv.index("--run-name") + 1] != f"{logical}-a2"
+
+
+def test_a_job_for_a_command_it_has_no_inputs_for_is_refused(job) -> None:
+    # The CPU train-head job needs a feature-cache channel it does not have
+    # yet (#188); until then the job must not run train-baseline in its place.
+    env = job_env(job["code"], job["manifests"], AERIAL_SEARCH_COMMAND="train-head")
+    with pytest.raises(entry.JobRefused, match="train-head"):
+        prepare(job, env)

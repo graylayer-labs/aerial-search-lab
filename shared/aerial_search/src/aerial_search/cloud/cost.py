@@ -23,11 +23,47 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 ON_DEMAND_USD_PER_HOUR = 0.822  # ml.g4dn.xlarge, eu-west-1, 2026-10-14
-ON_DEMAND_USD = {"ml.g4dn.xlarge": ON_DEMAND_USD_PER_HOUR}  # for running jobs
 SPOT_USD_PER_HOUR = 0.40  # top of the 0.33-0.40 estimate; AWS publishes none
 EUR_PER_USD = 0.95  # deliberately high so the guard errs towards refusing
 RUN_LIMIT_EUR = 15.0
 MONTH_LIMIT_EUR = 60.0
+# CPU jobs (#184), approved by the owner on 2026-10-23: at most 2 h each and
+# EUR 5 a month. ml.m5.xlarge on demand, eu-west-1, from the AWS Price List
+# read 2026-10-03 (the owner's AWS guide). ml.m5.large has no verified price,
+# so it is not listed and stays refused.
+CPU_ON_DEMAND_USD_PER_HOUR = 0.257
+CPU_MAX_RUNTIME_HOURS = 2.0
+CPU_MONTH_LIMIT_EUR = 5.0
+
+
+@dataclass(frozen=True)
+class Instance:
+    """What the guard allows on one instance type."""
+
+    on_demand_usd: float
+    spot_usd: float  # the estimate's price; the worst case is on demand
+    run_limit_eur: float
+    month_limit_eur: float
+    max_runtime_hours: float | None = None  # None: only the run limit binds
+    spot_only: bool = False  # no IAM condition enforces spot; this does
+
+
+INSTANCES = {
+    "ml.g4dn.xlarge": Instance(
+        ON_DEMAND_USD_PER_HOUR, SPOT_USD_PER_HOUR, RUN_LIMIT_EUR, MONTH_LIMIT_EUR
+    ),
+    # Spot priced at on demand: AWS publishes no SageMaker spot price, and
+    # spot never costs more. The run limit is the month cap; 2 h binds first.
+    "ml.m5.xlarge": Instance(
+        CPU_ON_DEMAND_USD_PER_HOUR,
+        CPU_ON_DEMAND_USD_PER_HOUR,
+        CPU_MONTH_LIMIT_EUR,
+        CPU_MONTH_LIMIT_EUR,
+        CPU_MAX_RUNTIME_HOURS,
+        spot_only=True,
+    ),
+}
+ON_DEMAND_USD = {name: i.on_demand_usd for name, i in INSTANCES.items()}  # running
 LIVE_STATUSES = ("InProgress", "Stopping")  # a job with no status counts as live
 LAG_HOURS = 48  # how long a finished job may be missing from Cost Explorer
 
@@ -60,6 +96,26 @@ class Estimate:
     running_jobs_eur: float | None
     month_total_eur: float | None
     month_check: str
+
+
+def limits(instance_type: str, *, spot: bool, max_runtime_hours: float) -> Instance:
+    """The instance's prices and limits, or `CostRefused` if it is not listed,
+    must be spot and is not, or would run past its runtime cap."""
+    instance = INSTANCES.get(instance_type)
+    if instance is None:
+        raise CostRefused(
+            f"instance {instance_type!r} is not on the list ({', '.join(INSTANCES)}); "
+            "an instance without a verified price is refused"
+        )
+    if instance.spot_only and not spot:
+        raise CostRefused(f"{instance_type} jobs must be managed spot")
+    cap = instance.max_runtime_hours
+    if cap is not None and max_runtime_hours > cap:
+        raise CostRefused(
+            f"max runtime {max_runtime_hours} h is over the {cap} h cap for "
+            f"{instance_type}; lower --max-runtime-hours"
+        )
+    return instance
 
 
 def default_expected_hours(input_mode: str, camera: str) -> float:
