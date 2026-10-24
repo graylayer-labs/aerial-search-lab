@@ -501,6 +501,93 @@ def test_a_cpu_launch_counts_m5_spend_not_the_gpus(repo: Path, tmp_path: Path) -
     assert len(cloud.created) == 1
 
 
+# --- the feature cache as a channel (#191) ----------------------------------------
+
+CACHE = "features/siglip2-base-naflex-1024tok-equalise"  # the longest real name
+
+
+def head_request(**over: Any) -> dict[str, Any]:
+    return request(
+        instance_type="ml.m5.xlarge",
+        command="train-head",
+        max_runtime_hours=2.0,
+        features_cache=CACHE,
+        features_sha256="e" * 64,
+        **over,
+    )
+
+
+def test_a_train_head_request_reads_the_features_from_their_digests_prefix() -> None:
+    r = head_request()
+    channels = {c["ChannelName"]: c for c in r["InputDataConfig"]}
+    assert set(channels) == {"dataset", "manifests", "constraints", "features"}
+    assert channels["features"]["InputMode"] == "File"
+    assert channels["features"]["DataSource"]["S3DataSource"]["S3Uri"] == (
+        "s3://ssl-aerial-person-detection-data-eu-west1/sagemaker/inputs/features/"
+        "siglip2-base-naflex-1024tok-equalise/" + "e" * 16 + "/"
+    )
+    sent = json.loads(r["Environment"]["AERIAL_SEARCH_FEATURES"])
+    assert sent == {"features_sha256": "e" * 64, "cache": CACHE}
+    assert all(len(v) <= 512 for v in r["Environment"].values())
+
+
+def test_a_request_without_features_has_no_features_channel() -> None:
+    r = request(instance_type="ml.m5.xlarge", command="x", max_runtime_hours=2.0)
+    assert "features" not in {c["ChannelName"] for c in r["InputDataConfig"]}
+    assert "AERIAL_SEARCH_FEATURES" not in r["Environment"]
+
+
+def write_cache(root: Path) -> launcher.Features:
+    files = ["cache.json", "index.jsonl", "features/v/a.npy", "runs/s/run.json"]
+    for name in [*files, "features/other/b.npy"]:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(name)
+    return launcher.Features(root, tuple(files))
+
+
+def test_a_head_launch_sends_the_chosen_cache_files_once(
+    repo: Path, tmp_path: Path
+) -> None:
+    features = write_cache(tmp_path / "features" / "siglip2-base-naflex-1024tok")
+    cloud = Cloud()
+    head = dict(CPU, expected_hours=0.5, command="train-head", features=features)
+    plan = launch(repo, tmp_path, **head, dry_run=False, session_factory=lambda: cloud)
+    digest = source.digest_paths(features.root, features.files)
+    prefix = f"sagemaker/inputs/features/siglip2-base-naflex-1024tok/{digest[:16]}/"
+    assert plan.features_prefix == prefix
+    uploads = [key for kind, key in cloud.s3.calls if kind == "upload"]
+    assert sorted(k for k in uploads if k.startswith(prefix)) == sorted(
+        prefix + f for f in features.files
+    )
+    puts = [key for kind, key in cloud.s3.calls if kind == "put"]
+    assert puts[-1] == prefix + source.MARKER  # written after the files
+    sent = json.loads(plan.request["Environment"]["AERIAL_SEARCH_FEATURES"])
+    assert sent == {
+        "features_sha256": digest,
+        "cache": "features/siglip2-base-naflex-1024tok",
+    }
+    cloud.s3.calls.clear()
+    launch(
+        repo, tmp_path, **head, attempt=2, dry_run=False, session_factory=lambda: cloud
+    )
+    assert not [k for kind, k in cloud.s3.calls if kind == "upload"]
+
+
+def test_a_head_dry_run_names_the_features_channel_and_uploads_nothing(
+    repo: Path, tmp_path: Path
+) -> None:
+    features = write_cache(tmp_path / "features" / "c")
+    plan = launch(
+        repo,
+        tmp_path,
+        **CPU,
+        expected_hours=0.5,
+        command="train-head",
+        features=features,
+    )
+    assert "features" in {c["ChannelName"] for c in plan.request["InputDataConfig"]}
+
+
 @pytest.mark.parametrize(
     ("over", "match"),
     [
