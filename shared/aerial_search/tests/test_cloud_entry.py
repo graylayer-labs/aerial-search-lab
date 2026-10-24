@@ -348,9 +348,105 @@ def test_a_name_in_attempts_json_is_never_reused_even_if_counts_disagree(job) ->
     assert argv[argv.index("--run-name") + 1] != f"{logical}-a2"
 
 
-def test_a_job_for_a_command_it_has_no_inputs_for_is_refused(job) -> None:
-    # The CPU train-head job needs a feature-cache channel it does not have
-    # yet (#188); until then the job must not run train-baseline in its place.
-    env = job_env(job["code"], job["manifests"], AERIAL_SEARCH_COMMAND="train-head")
-    with pytest.raises(entry.JobRefused, match="train-head"):
+@pytest.mark.parametrize("command", ["train-head", "evaluate"])
+def test_a_job_for_a_command_it_has_no_inputs_for_is_refused(job, command) -> None:
+    # train-head needs the features channel (#191); any other command has no
+    # inputs at all. Neither may run train-baseline in its place.
+    env = job_env(job["code"], job["manifests"], AERIAL_SEARCH_COMMAND=command)
+    with pytest.raises(entry.JobRefused, match=command):
         prepare(job, env)
+
+
+# --- train-head reads the features channel (#191) ---------------------------------
+
+CACHE = "features/siglip2-base-naflex-1024tok"
+
+
+@pytest.fixture
+def head_job(job, tmp_path: Path) -> dict[str, Any]:
+    features = tmp_path / "in" / "features"
+    (features / "features" / "v").mkdir(parents=True)
+    (features / "cache.json").write_text("{}")
+    (features / "features" / "v" / "a.npy").write_bytes(b"\1\2")
+    (features / source.MARKER).write_text("")  # S3 holds it; it does not count
+    head = request(
+        source_sha256=source.digest_dir(job["code"]),
+        manifests_sha256=source.digest_dir(job["manifests"]),
+        constraints_sha256=hashlib.sha256(PINS).hexdigest(),
+        instance_type="ml.m5.xlarge",
+        command="train-head",
+        max_runtime_hours=2.0,
+        features_cache=CACHE,
+        features_sha256=source.digest_dir(features),
+    )
+    env = {**head["Environment"], "TRAINING_JOB_NAME": "ssl-aerial-exp-1"}
+    return {**job, "features": features, "links": tmp_path / "links", "env": env}
+
+
+def prepare_head(job: dict[str, Any], env: dict[str, str]) -> list[str]:
+    return entry.prepare(
+        env,
+        code_root=job["code"],
+        data_root=job["data"],
+        manifests=job["manifests"],
+        constraints=job["constraints"],
+        checkpoint_dir=job["checkpoints"],
+        features=job["features"],
+        feature_links=job["links"],
+    )
+
+
+def test_a_head_job_runs_train_head_on_the_cache_under_its_own_names(
+    head_job,
+) -> None:
+    argv = prepare_head(head_job, head_job["env"])
+    assert argv[0] == "train-head"
+    assert argv[1:6] == BASE["baseline_args"][:5]
+    flags = dict(zip(argv[1:], argv[2:], strict=False))
+    assert "--checkpoint-dir" not in flags
+    assert flags["--data-root"] == str(head_job["data"])
+    assert flags["--manifests"] == str(head_job["manifests"])
+    cache = Path(flags["--cache"])
+    assert cache == head_job["links"] / CACHE
+    assert cache.resolve() == head_job["features"].resolve()
+    assert (cache / "features" / "v" / "a.npy").read_bytes() == b"\1\2"
+    assert "-a1-" in flags["--run-name"]
+
+
+def test_modified_features_in_the_job_are_refused(head_job) -> None:
+    (head_job["features"] / "features" / "v" / "a.npy").write_bytes(b"\0")
+    with pytest.raises(entry.JobRefused, match="features"):
+        prepare_head(head_job, head_job["env"])
+
+
+@pytest.mark.parametrize("cache", ["../x", "features/../../x", "x", "/abs/x", "a/b/c"])
+def test_a_cache_name_that_is_not_two_plain_names_is_refused(head_job, cache) -> None:
+    sent = json.loads(head_job["env"][launcher.FEATURES_ENV])
+    env = {
+        **head_job["env"],
+        launcher.FEATURES_ENV: json.dumps({**sent, "cache": cache}),
+    }
+    with pytest.raises(entry.JobRefused, match="cache"):
+        prepare_head(head_job, env)
+
+
+def test_the_run_records_the_verified_features_in_its_attestation(
+    in_job, head_job, monkeypatch
+) -> None:
+    # in_job first: it changes the code that head_job's request then hashes
+    from aerial_search import cli
+
+    monkeypatch.setattr(entry, "FEATURES", head_job["features"])
+    monkeypatch.setattr(entry, "FEATURE_LINKS", head_job["links"])
+    monkeypatch.setenv(entry.ATTESTATION_ENV, "")  # restored after the test
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        cli,
+        "main",
+        lambda argv: seen.update(json.loads(entry.os.environ[entry.ATTESTATION_ENV])),
+    )
+    entry.main(head_job["env"])
+    sent = json.loads(head_job["env"][launcher.FEATURES_ENV])
+    assert seen["features_sha256"] == sent["features_sha256"]
+    assert seen["features_cache"] == CACHE
+    assert seen["commit"] == "a" * 40
