@@ -36,7 +36,7 @@ per-fold scores are in each project's README.
 | [finetuned-detector](projects/finetuned-detector/) | A COCO-pretrained Faster R-CNN fine-tuned on the few labels: the bar | Results in; tiled runs next | 0.163 ± 0.042 / 0.046 ± 0.011 | 0.256 ± 0.220 / 0.137 ± 0.146 | [results](docs/supervised-baseline-results.md) |
 | [frozen-head](projects/frozen-head/) | A small head on frozen SigLIP 2 features | Results in; below the bar | 0.113 ± 0.075 / 0.006 ± 0.005 | 0.129 ± 0.096 / 0.007 ± 0.005 | [results](docs/supervised-baseline-results.md) |
 
-## Where it's at (2026-10-23)
+## Where it's at (2026-10-24)
 
 - **Done:** the data is paired, split by site and day, and scored; the
   baseline to beat is an ordinary fine-tuned detector, which leads a frozen
@@ -47,7 +47,10 @@ per-fold scores are in each project's README.
   tiles, and a stopped run resumes. No tiled score yet.
 - **Done:** the repo is reshaped into a lab of approaches that share one
   evaluation ([#160](https://github.com/graylayer-labs/aerial-search-lab/issues/160)).
-- **Doing:** waiting on AWS to grant a spot GPU quota for the first SageMaker job ([#127](https://github.com/graylayer-labs/aerial-search-lab/issues/127)).
+- **Done:** frozen-head training can be sent to a small CPU cloud job, capped
+  at 2 h and EUR 5 a month, with its cached features checked by hash in the
+  job ([#191](https://github.com/graylayer-labs/aerial-search-lab/issues/191)). No job has run yet.
+- **Doing:** the first CPU job ([#184](https://github.com/graylayer-labs/aerial-search-lab/issues/184)), while AWS decides on a spot GPU quota ([#127](https://github.com/graylayer-labs/aerial-search-lab/issues/127)).
 - **Next:** cloud runs of the tiled detector ([#96](https://github.com/graylayer-labs/aerial-search-lab/issues/96)), then adapting the model with unlabelled footage.
 
 The dated log is [docs/progress.md](docs/progress.md).
