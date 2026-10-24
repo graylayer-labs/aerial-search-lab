@@ -243,3 +243,76 @@ def test_the_cpu_month_cap_counts_spend_running_jobs_and_this_run() -> None:
 def test_a_running_cpu_job_is_counted_not_refused() -> None:
     eur = cost.running_jobs_eur([running("ml.m5.xlarge", 7200)], eur_per_usd=1.0)
     assert eur == pytest.approx(0.257 * 2)
+
+
+# --- the CPU cap counts CPU spend only (#191) ---------------------------------------
+
+
+def group(usage_type: str, amount: str) -> dict:
+    return {"Keys": [usage_type], "Metrics": {"UnblendedCost": {"Amount": amount}}}
+
+
+def test_the_cpu_month_to_date_sums_only_m5_usage_types_over_every_page() -> None:
+    calls: list[dict[str, Any]] = []
+    pages = [
+        {
+            "ResultsByTime": [
+                {
+                    "Groups": [
+                        group("EU-Train:ml.g4dn.xlarge", "40.0"),
+                        group("EU-Train-Spot:ml.m5.xlarge", "1.5"),
+                    ]
+                }
+            ],
+            "NextPageToken": "p2",
+        },
+        {
+            "ResultsByTime": [
+                {
+                    "Groups": [
+                        group("EU-Train:VolumeUsage.gp2", "3.0"),
+                        group("EU-Train:ml.m5.xlarge", "0.5"),
+                    ]
+                }
+            ]
+        },
+    ]
+
+    class Ce:
+        def get_cost_and_usage(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return pages[len(calls) - 1]
+
+    eur = cost.month_to_date_eur(
+        Ce(), eur_per_usd=1.0, today=cost.date(2026, 10, 14), usage_family="ml.m5."
+    )
+    assert eur == pytest.approx(2.0)
+    assert calls[0]["GroupBy"] == [{"Type": "DIMENSION", "Key": "USAGE_TYPE"}]
+    assert calls[0]["Filter"]["Dimensions"]["Values"] == ["Amazon SageMaker"]
+    assert "NextPageToken" not in calls[0]
+    assert calls[1]["NextPageToken"] == "p2"
+
+
+def test_the_gpu_month_to_date_stays_account_wide_and_ungrouped() -> None:
+    seen: dict[str, Any] = {}
+
+    class Ce:
+        def get_cost_and_usage(self, **kwargs: Any) -> Any:
+            seen.update(kwargs)
+            return {"ResultsByTime": [{"Total": {"UnblendedCost": {"Amount": "1.0"}}}]}
+
+    cost.month_to_date_eur(Ce(), eur_per_usd=1.0, today=cost.date(2026, 10, 14))
+    assert "GroupBy" not in seen
+
+
+def test_the_cpu_instance_counts_m5_spend_and_the_gpu_all_sagemaker() -> None:
+    assert cost.INSTANCES["ml.m5.xlarge"].usage_family == "ml.m5."
+    assert cost.INSTANCES["ml.g4dn.xlarge"].usage_family is None
+
+
+def test_running_gpu_jobs_do_not_count_against_the_cpu_cap() -> None:
+    jobs = [running("ml.g4dn.xlarge", 12 * 3600), running("ml.m5.xlarge", 7200)]
+    eur = cost.running_jobs_eur(jobs, eur_per_usd=1.0, usage_family="ml.m5.")
+    assert eur == pytest.approx(0.257 * 2)
+    every = cost.running_jobs_eur(jobs, eur_per_usd=1.0)
+    assert every == pytest.approx(0.822 * 12 + 0.257 * 2)
