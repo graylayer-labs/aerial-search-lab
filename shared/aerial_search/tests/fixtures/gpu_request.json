@@ -1,0 +1,81 @@
+{
+  "TrainingJobName": "ssl-aerial-detection-baseline-fasterrcnn-resnet50-fpn-43a04e-1",
+  "AlgorithmSpecification": {
+    "TrainingImage": "763104351884.dkr.ecr.eu-west-1.amazonaws.com/pytorch-training:2.13.0-gpu-py312-cu128-ubuntu22.04-sagemaker",
+    "TrainingInputMode": "File"
+  },
+  "RoleArn": "arn:aws:iam::123456789012:role/r",
+  "InputDataConfig": [
+    {
+      "ChannelName": "dataset",
+      "InputMode": "FastFile",
+      "DataSource": {
+        "S3DataSource": {
+          "S3DataType": "S3Prefix",
+          "S3Uri": "s3://ssl-aerial-person-detection-data-eu-west1/wisard/raw/wisard-full/",
+          "S3DataDistributionType": "FullyReplicated"
+        }
+      }
+    },
+    {
+      "ChannelName": "manifests",
+      "InputMode": "File",
+      "DataSource": {
+        "S3DataSource": {
+          "S3DataType": "S3Prefix",
+          "S3Uri": "s3://ssl-aerial-person-detection-data-eu-west1/sagemaker/inputs/manifests/cccccccccccccccc/",
+          "S3DataDistributionType": "FullyReplicated"
+        }
+      }
+    },
+    {
+      "ChannelName": "constraints",
+      "InputMode": "File",
+      "DataSource": {
+        "S3DataSource": {
+          "S3DataType": "S3Prefix",
+          "S3Uri": "s3://ssl-aerial-person-detection-data-eu-west1/sagemaker/inputs/constraints/dddddddddddddddd/",
+          "S3DataDistributionType": "FullyReplicated"
+        }
+      }
+    }
+  ],
+  "OutputDataConfig": {
+    "S3OutputPath": "s3://ssl-aerial-person-detection-data-eu-west1/sagemaker/outputs/"
+  },
+  "ResourceConfig": {
+    "InstanceType": "ml.g4dn.xlarge",
+    "InstanceCount": 1,
+    "VolumeSizeInGB": 30
+  },
+  "StoppingCondition": {
+    "MaxRuntimeInSeconds": 43200,
+    "MaxWaitTimeInSeconds": 64800
+  },
+  "CheckpointConfig": {
+    "S3Uri": "s3://ssl-aerial-person-detection-data-eu-west1/sagemaker/checkpoints/detection-baseline-fasterrcnn_resnet50_fpn-tiled-rgb-220109_Baker-10pct-seed7/",
+    "LocalPath": "/opt/ml/checkpoints"
+  },
+  "HyperParameters": {
+    "sagemaker_program": "\"tools/sagemaker_entry.py\"",
+    "sagemaker_submit_directory": "\"s3://ssl-aerial-person-detection-data-eu-west1/sagemaker/source/aaaaaaaaaaaa-bbbbbbbbbbbb/sourcedir.tar.gz\"",
+    "sagemaker_region": "\"eu-west-1\"",
+    "sagemaker_job_name": "\"ssl-aerial-detection-baseline-fasterrcnn-resnet50-fpn-43a04e-1\""
+  },
+  "Environment": {
+    "AERIAL_SEARCH_ATTESTATION": "{\"commit\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_sha256\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"manifests_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"constraints_sha256\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"instance_type\": \"ml.g4dn.xlarge\", \"spot\": true, \"scratch\": false, \"launched_at\": \"2026-10-24T12:00:00+00:00\"}",
+    "AERIAL_SEARCH_BASELINE_ARGS": "[\"rgb\", \"--percent\", \"10\", \"--fold\", \"220109_Baker\"]",
+    "AERIAL_SEARCH_LOGICAL_RUN": "detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7"
+  },
+  "Tags": [
+    {
+      "Key": "project",
+      "Value": "ssl-aerial-person-detection"
+    },
+    {
+      "Key": "stop-by",
+      "Value": "2026-10-26"
+    }
+  ],
+  "EnableManagedSpotTraining": true
+}
