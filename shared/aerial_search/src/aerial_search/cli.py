@@ -59,6 +59,12 @@ PROJECT_COMMANDS: dict[str, ProjectCommand] = {
         "train the person-centre head on cached features: one fold, one "
         "camera, one label fraction, one seed (docs/detection-head-design.md)",
     ),
+    "sagemaker-train-head": ProjectCommand(
+        "frozen_head.cli",
+        "run one train-head as one CPU SageMaker spot job (ml.m5.xlarge, at "
+        "most 2 h, EUR 5 a month) after a cost check (#188); dry run only "
+        "until the job can read the feature cache",
+    ),
     "check-cache": ProjectCommand(
         "frozen_head.cli",
         "list frames the manifests reference that a feature cache lacks; exit 1 if any",

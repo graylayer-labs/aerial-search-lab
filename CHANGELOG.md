@@ -21,6 +21,15 @@ each links to the issue or pull request that holds the detail.
 
 ## Epic: Domain adaptation (in progress)
 
+### 2026-10-24
+
+**New capability**
+- `aerial-search sagemaker-train-head` builds a `train-head` run as a CPU
+  SageMaker spot job on `ml.m5.xlarge` (at most 2 h, EUR 5 a month), priced
+  and refused by the same cost guard; the GPU path is unchanged. Dry run
+  only: the job cannot read the feature cache yet, and says so.
+  ([#188](https://github.com/graylayer-labs/aerial-search-lab/issues/188))
+
 ### 2026-10-15
 
 **New capability**

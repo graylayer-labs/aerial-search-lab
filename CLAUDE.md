@@ -570,6 +570,17 @@ to its issue or PR. No version numbers.
   `run.json`, after re-archiving the attested commit and checking its digest
   and that it is on `origin/main`. Design and limits:
   `shared/aerial_search/src/aerial_search/cloud/entry.py`.
+- **CPU cloud run (#188).** `uv run aerial-search sagemaker-train-head rgb
+  --percent 10 --fold 220109_Baker --month-to-date-eur 0 --dry-run` builds one
+  `train-head` as a spot job on `ml.m5.xlarge` through the same launcher,
+  attestation and guard. The owner approved CPU jobs on 2026-10-23 (#184): at
+  most 2 h each (`--max-runtime-hours`, default 2) and EUR 5 a month,
+  counted as month-to-date plus running jobs plus this run's worst case, as
+  for GPU. Spot is enforced in code only (no IAM condition does). An instance
+  not in `cost.INSTANCES` is refused. It takes `train-head`'s flags less
+  `--data-root` and `--init-head`. Dry run only for now: the job cannot read
+  the feature cache, so the dry run names that missing input and a send is
+  refused, in the launcher's CLI and again in the job.
 - Any number quoted in a doc or README must be reproducible from a committed
   config. If a number cannot be traced, remove it.
 - Report negative results. State what was expected, what happened, and the
