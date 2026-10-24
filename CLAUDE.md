@@ -588,7 +588,11 @@ to its issue or PR. No version numbers.
   as the manifests. The job hashes the `features` channel against
   `AERIAL_SEARCH_FEATURES`, links it as
   `/opt/ml/feature-links/features/<cache>` and runs `train-head --cache` on
-  it; `run.json`'s attestation gains `features_sha256`. The GPU request is
+  it; `run.json`'s attestation gains `features_sha256`. Known limit: the
+  features digest is verified in the job only; `sagemaker-fetch` cannot
+  re-check it, so `run.json`'s job-confirmed `features_sha256` is the
+  record. A usage-type format with no `ml.` in it is refused, not read as
+  zero. The GPU request is
   pinned by `shared/aerial_search/tests/fixtures/gpu_request.json`.
 - Any number quoted in a doc or README must be reproducible from a committed
   config. If a number cannot be traced, remove it.
