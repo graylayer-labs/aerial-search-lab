@@ -568,24 +568,32 @@ def fetch(
         unpacked = Path(scratch) / "unpacked"
         with tarfile.open(archive) as tar:
             tar.extractall(unpacked, filter="data")
-        entries = sorted(unpacked.iterdir())
+        # A run may sit at any depth (a run name may hold slashes); every
+        # run.json is verified, and only run directories are moved.
+        found = sorted(p.parent for p in unpacked.rglob("run.json") if p.is_file())
+        if not found:
+            raise run_module.ProvenanceError(
+                f"the output of job {job} holds no run.json; nothing to fetch"
+            )
         root = run_module._repo_root((repo or run_module._code_location()).resolve())
-        for entry in entries:
-            if (entry / "run.json").exists():
-                check_attestation(json.loads((entry / "run.json").read_text()), root)
-        clashes = [e.name for e in entries if (outputs / e.name).exists()]
+        for directory in found:
+            check_attestation(json.loads((directory / "run.json").read_text()), root)
+        runs = [d for d in found if not any(p in found for p in d.parents)]
+        relative = [d.relative_to(unpacked) for d in runs]
+        clashes = [str(r) for r in relative if (outputs / r).exists()]
         if clashes:
             raise FileExistsError(
                 f"{', '.join(clashes)} already under {outputs}; runs are never "
                 "overwritten"
             )
         moved = []
-        for entry in entries:
-            shutil.move(str(entry), outputs / entry.name)
-            moved.append(outputs / entry.name)
+        for directory, name in zip(runs, relative, strict=True):
+            (outputs / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(directory), outputs / name)
+            moved.append(outputs / name)
     for directory in moved:
-        if (directory / "run.json").exists():
-            (directory / "cloud-job.json").write_text(
+        for record in directory.rglob("run.json"):
+            (record.parent / "cloud-job.json").write_text(
                 json.dumps(description, indent=2, default=str) + "\n"
             )
     return moved
