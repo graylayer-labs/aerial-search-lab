@@ -359,6 +359,45 @@ def check_cache(
     return CacheView(entries, sessions, settings, missing)
 
 
+def job_files(
+    cache_dir: Path,
+    manifests: Path,
+    *,
+    fold: str,
+    camera: str,
+    percent: int,
+    scratch: bool,
+) -> tuple[str, ...]:
+    """The cache files a cloud job of this run needs, relative to the cache.
+
+    The cache is first checked as the run itself will check it (#191). Then:
+    `cache.json`, `index.jsonl`, the `run.json` of every session that wrote
+    one of this camera's images, and those images' features. The whole
+    camera, not only this fold, so one upload serves every fold and percent.
+    """
+    from aerial_search.data import checksums
+
+    _, records = select_records(manifests, fold, camera, percent)
+    pinned = None if scratch else {e.path: e.sha256 for e in checksums.committed_list()}
+    check_cache(
+        cache_dir,
+        [r for rs in records.values() for r in rs],
+        camera,
+        scratch=scratch,
+        pinned=pinned,
+    )
+    entries = [e for e in read_index(cache_dir).values() if e["camera"] == camera]
+    sessions = sorted({str(e["run"]) for e in entries})
+    runs = [f"runs/{s}/run.json" for s in sessions]
+    features = [_feature_path(cache_dir, str(e["path"])) for e in entries]
+    return (
+        "cache.json",
+        "index.jsonl",
+        *(r for r in runs if (cache_dir / r).is_file()),
+        *(p.relative_to(cache_dir).as_posix() for p in features if p.is_file()),
+    )
+
+
 def cache_arm(cache_json: Mapping[str, Any]) -> str:
     """How the cache's frames reached the backbone; absent means replicate."""
     return str(cache_json.get("settings", {}).get("input_handling", DEFAULT_ARM))
