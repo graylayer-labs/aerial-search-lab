@@ -62,8 +62,8 @@ PROJECT_COMMANDS: dict[str, ProjectCommand] = {
     "sagemaker-train-head": ProjectCommand(
         "frozen_head.cli",
         "run one train-head as one CPU SageMaker spot job (ml.m5.xlarge, at "
-        "most 2 h, EUR 5 a month) after a cost check (#188); dry run only "
-        "until the job can read the feature cache",
+        "most 2 h, EUR 5 a month) after a cost check (#188), with the "
+        "camera's feature cache files as its features channel (#191)",
     ),
     "check-cache": ProjectCommand(
         "frozen_head.cli",

@@ -62,8 +62,26 @@ def test_train_head_accepts_every_forwarded_flag_at_any_value() -> None:
         assert getattr(received, name) == getattr(sent, name), name
 
 
+CHOSEN = ("cache.json", "index.jsonl", "runs/s/run.json", "features/a.npy")
+
+
 @pytest.fixture
-def launched(monkeypatch) -> dict[str, Any]:
+def chosen(monkeypatch) -> list[dict[str, Any]]:
+    """`job_files` faked: the CLI tests have no cache on disk."""
+    from frozen_head import head_experiment
+
+    calls: list[dict[str, Any]] = []
+
+    def fake(cache: Path, manifests: Path, **kw: Any) -> tuple[str, ...]:
+        calls.append({"cache": cache, "manifests": manifests, **kw})
+        return CHOSEN
+
+    monkeypatch.setattr(head_experiment, "job_files", fake)
+    return calls
+
+
+@pytest.fixture
+def launched(monkeypatch, chosen) -> dict[str, Any]:
     seen: dict[str, Any] = {}
 
     def fake_launch(**kw: Any) -> Any:
@@ -75,13 +93,29 @@ def launched(monkeypatch) -> dict[str, Any]:
     return seen
 
 
-def test_a_dry_run_is_a_cpu_spot_train_head_job_and_names_the_missing_input(
-    launched, capsys
+def test_a_dry_run_is_a_cpu_spot_train_head_job_with_the_cache_files(
+    launched, chosen, capsys
 ) -> None:
     cli.main([*LAUNCH, "--dry-run", "--month-to-date-eur", "0"])
     out = json.loads(capsys.readouterr().out)
     assert out["dry_run"] is True
-    assert "siglip2-base-naflex-1024tok" in out["missing_inputs"][0]
+    assert out["features"] == {
+        "cache": "features/siglip2-base-naflex-1024tok",
+        "files": len(CHOSEN),
+    }
+    assert launched["features"] == launcher.Features(
+        Path("outputs/features/siglip2-base-naflex-1024tok"), CHOSEN
+    )
+    assert chosen == [
+        {
+            "cache": Path("outputs/features/siglip2-base-naflex-1024tok"),
+            "manifests": Path("data/manifests/wisard-full"),
+            "fold": "220109_Baker",
+            "camera": "rgb",
+            "percent": 10,
+            "scratch": False,
+        }
+    ]
     assert launched["instance_type"] == "ml.m5.xlarge"
     assert launched["command"] == "train-head"
     assert launched["spot"] is True
@@ -92,13 +126,28 @@ def test_a_dry_run_is_a_cpu_spot_train_head_job_and_names_the_missing_input(
     )
 
 
-def test_sending_is_refused_until_the_job_can_read_the_cache(launched) -> None:
-    with pytest.raises(SystemExit, match="feature cache"):
-        cli.main(LAUNCH)
+def test_a_send_launches_with_the_cache_files(launched) -> None:
+    cli.main(LAUNCH)
+    assert launched["dry_run"] is False
+    assert launched["features"].files == CHOSEN
+
+
+def test_a_cache_the_run_would_refuse_is_refused_before_launching(
+    launched, monkeypatch
+) -> None:
+    from frozen_head import head_experiment
+    from frozen_head.feature_cache import CacheError
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise CacheError("cache session s1 is scratch")
+
+    monkeypatch.setattr(head_experiment, "job_files", refuse)
+    with pytest.raises(SystemExit, match="refusing to launch: cache session s1"):
+        cli.main([*LAUNCH, "--dry-run"])
     assert launched == {}
 
 
-def test_a_refused_launch_exits_with_the_reason(monkeypatch) -> None:
+def test_a_refused_launch_exits_with_the_reason(monkeypatch, chosen) -> None:
     from aerial_search.cloud import cost
 
     def refuse(**_: Any) -> Any:
