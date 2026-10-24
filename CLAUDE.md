@@ -578,9 +578,18 @@ to its issue or PR. No version numbers.
   counted as month-to-date plus running jobs plus this run's worst case, as
   for GPU. Spot is enforced in code only (no IAM condition does). An instance
   not in `cost.INSTANCES` is refused. It takes `train-head`'s flags less
-  `--data-root` and `--init-head`. Dry run only for now: the job cannot read
-  the feature cache, so the dry run names that missing input and a send is
-  refused, in the launcher's CLI and again in the job.
+  `--data-root` and `--init-head`; `--eur-per-usd` below 0.95 and a negative
+  `--month-to-date-eur` are refused. The EUR 5 counts m5 spend only (Cost
+  Explorer grouped by usage type, matching `ml.m5.`; the spelling is
+  unverified) and running m5 jobs. The feature cache (#191): the launcher
+  checks it as the run will, then sends one camera's features, `cache.json`,
+  `index.jsonl` and the writing sessions' `run.json` (about 5.5 GB), once per
+  digest, to `sagemaker/inputs/features/<cache>/<digest16>/` with a marker,
+  as the manifests. The job hashes the `features` channel against
+  `AERIAL_SEARCH_FEATURES`, links it as
+  `/opt/ml/feature-links/features/<cache>` and runs `train-head --cache` on
+  it; `run.json`'s attestation gains `features_sha256`. The GPU request is
+  pinned by `shared/aerial_search/tests/fixtures/gpu_request.json`.
 - Any number quoted in a doc or README must be reproducible from a committed
   config. If a number cannot be traced, remove it.
 - Report negative results. State what was expected, what happened, and the
