@@ -108,6 +108,31 @@ def test_a_refused_launch_exits_with_the_reason(monkeypatch) -> None:
         cli.main([*LAUNCH, "--dry-run"])
 
 
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--eur-per-usd", "0.94"],
+        ["--eur-per-usd", "nan"],
+        ["--month-to-date-eur", "-0.01"],
+        ["--month-to-date-eur", "nan"],
+    ],
+)
+def test_a_rate_below_the_guards_or_a_negative_spend_is_refused(
+    launched, flags: list[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        cli.main([*LAUNCH, "--dry-run", *flags])
+    assert launched == {}
+
+
+def test_the_guards_rate_and_zero_spend_are_accepted(launched) -> None:
+    cli.main(
+        [*LAUNCH, "--dry-run", "--eur-per-usd", "0.95", "--month-to-date-eur", "0"]
+    )
+    assert launched["eur_per_usd"] == 0.95
+    assert launched["month_to_date_eur"] == 0.0
+
+
 def test_the_command_line_has_no_on_demand_or_instance_flag() -> None:
     for flag in ("--on-demand", "--instance-type"):
         with pytest.raises(SystemExit):
