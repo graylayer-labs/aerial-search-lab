@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
-from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
+from transformers.models.siglip2 import (
+    Siglip2ImageProcessor,
+    Siglip2VisionConfig,
+    Siglip2VisionModel,
+)
 
 from frozen_head import thermal_input as ti
 from frozen_head.backbone import NaflexExtractor, pool2
@@ -22,7 +26,8 @@ def test_equalise_spreads_a_narrow_histogram_and_keeps_three_equal_channels():
     out = np.asarray(ti.equalise(ramp()))
 
     assert out.shape == (32, 64, 3)
-    assert (out[..., 0] == out[..., 1]).all() and (out[..., 0] == out[..., 2]).all()
+    assert (out[..., 0] == out[..., 1]).all()
+    assert (out[..., 0] == out[..., 2]).all()
     assert out.max() - out.min() > 200  # was 40 wide
 
 
@@ -106,7 +111,8 @@ def test_the_stem_trains_through_a_frozen_backbone_and_the_backbone_does_not_mov
     h, w = (int(v) for v in prepared["spatial_shapes"][0])
     assert grid.shape == (2, (h + 1) // 2, (w + 1) // 2, 32)
     grid.square().mean().backward()
-    assert stem.out.weight.grad is not None and stem.out.weight.grad.abs().sum() > 0
+    assert stem.out.weight.grad is not None
+    assert stem.out.weight.grad.abs().sum() > 0
     assert all(p.grad is None for p in model.parameters())
     optimiser = torch.optim.AdamW(stem.parameters(), lr=1e-2)
     optimiser.step()

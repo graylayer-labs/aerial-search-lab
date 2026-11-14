@@ -1,6 +1,8 @@
 """The supervised baseline (#67): same frames, same scoring, boxes in source pixels."""
 
+import functools
 import json
+import operator
 from pathlib import Path
 
 import numpy as np
@@ -116,8 +118,10 @@ def test_a_scratch_run_uses_the_selected_frames_and_scores_the_test_site_day(
     ]
     directory = tmp_path / "repo" / "outputs" / "scratch-bl-test"
     run = json.loads((directory / "run.json").read_text())
-    assert run["status"] == "completed" and run["scratch"] is True
-    assert run["config"]["camera"] == "thermal" and run["config"]["percent"] == 100
+    assert run["status"] == "completed"
+    assert run["scratch"] is True
+    assert run["config"]["camera"] == "thermal"
+    assert run["config"]["percent"] == 100
     assert {Path(i["path"]).name for i in run["inputs"]} == {
         "train_100pct.jsonl",
         "validation.jsonl",
@@ -159,7 +163,14 @@ def test_a_manifest_size_that_disagrees_with_the_image_is_refused(tmp_path):
 def test_batches_follow_the_heads_running_order():
     batches = list(be.BatchSteps(3, 2, 4, seed=1))
     assert [len(b) for b in batches] == [2, 2, 2, 2]
-    assert sorted(sum(batches[:3], [])) == [0, 0, 1, 1, 2, 2]  # two full passes
+    assert sorted(functools.reduce(operator.iadd, batches[:3], [])) == [
+        0,
+        0,
+        1,
+        1,
+        2,
+        2,
+    ]  # two full passes
 
 
 def test_input_size_is_the_caches_model_input_or_native():
@@ -232,7 +243,7 @@ def test_the_comparison_refuses_runs_that_saw_different_frames(tmp_path):
     fake_table_run(
         tmp_path / "base", "rgb", "A", 1, 0.3, 0.1, "baseline", train_hash="h2"
     )
-    with pytest.raises(ht.TableError, match="train_1pct.jsonl"):
+    with pytest.raises(ht.TableError, match=r"train_1pct.jsonl"):
         ht.check_same_frames(
             {
                 "head": ht.collect(tmp_path / "head"),
@@ -297,7 +308,7 @@ def test_the_comparison_refuses_a_missing_cell_or_a_missing_split_file(tmp_path)
     with pytest.raises(ht.TableError, match="rgb/A/5"):
         ht.check_same_frames({"head": head, "baseline": base})
     base[0]["manifests"].pop("A/rgb/validation.jsonl")
-    with pytest.raises(ht.TableError, match="validation.jsonl is missing"):
+    with pytest.raises(ht.TableError, match=r"validation.jsonl is missing"):
         ht.check_same_frames({"head": head[:1], "baseline": base})
 
 

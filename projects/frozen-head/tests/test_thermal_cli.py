@@ -58,5 +58,7 @@ def test_train_head_stem_dispatches_to_the_stem_runner(monkeypatch) -> None:
 
     cli.main([*command, "--scratch", "--device", "cpu"])
 
-    assert seen["recipe"].steps == 9 and seen["recipe"].micro_batch == 4
-    assert seen["scratch"] is True and seen["camera"] == "thermal"
+    assert seen["recipe"].steps == 9
+    assert seen["recipe"].micro_batch == 4
+    assert seen["scratch"] is True
+    assert seen["camera"] == "thermal"

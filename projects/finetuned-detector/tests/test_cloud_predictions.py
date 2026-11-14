@@ -17,7 +17,8 @@ def test_predictions_next_to_a_mid_training_checkpoint_are_set_aside_not_fatal(
     Checkpoints(tmp_path, identity, 10).save(phase="training", step=5)
     (tmp_path / "test_predictions.jsonl").write_text('{"image": "a"}\n')
     state = Checkpoints(tmp_path, identity, 10).load()
-    assert state is not None and state["step"] == 5
+    assert state is not None
+    assert state["step"] == 5
     assert not (tmp_path / "test_predictions.jsonl").exists()
     assert list(tmp_path.glob("test_predictions.stale-*"))
 
@@ -87,7 +88,7 @@ def test_predictions_with_no_model_id_beside_a_trained_checkpoint_are_set_aside(
         '{"image": "a", "boxes": [[0, 0, 1, 1]], "scores": [0.5]}\n'
     )
     loader = Checkpoints(tmp_path, {"seed": 7}, 10)
-    with pytest.warns(UserWarning):
+    with pytest.warns(UserWarning, match="set aside"):
         loader.load()
     assert not loader.predictions.exists()
 

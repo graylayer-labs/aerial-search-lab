@@ -6,7 +6,11 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
-from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
+from transformers.models.siglip2 import (
+    Siglip2ImageProcessor,
+    Siglip2VisionConfig,
+    Siglip2VisionModel,
+)
 
 from frozen_head import feature_cache as fc
 from frozen_head.backbone import Extraction, NaflexExtractor, pool2
@@ -78,14 +82,19 @@ def test_writes_fp16_features_per_image_with_camera_and_provenance(tmp_path, fra
     assert summary.computed == 3
     cache = tmp_path / "cache"
     array = fc.read_features(cache, "VIS_1/a_0.jpeg")
-    assert array.dtype == np.float16 and array.shape == (2, 3, 4)
+    assert array.dtype == np.float16
+    assert array.shape == (2, 3, 4)
     index = fc.read_index(cache)
     assert index["IR_2/b_0.jpeg"]["camera"] == "thermal"
     entry = index["VIS_1/a_0.jpeg"]
-    assert entry["grid"] == [2, 3] and entry["sha256"] == "sha0"
-    assert entry["run"] == "r1" and entry["commit"] == "abc"
-    assert entry["image_size"] == [32, 18] and entry["resized_size"] == [80, 48]
-    assert entry["patch_grid"] == [3, 5] and entry["pooling"] == 2
+    assert entry["grid"] == [2, 3]
+    assert entry["sha256"] == "sha0"
+    assert entry["run"] == "r1"
+    assert entry["commit"] == "abc"
+    assert entry["image_size"] == [32, 18]
+    assert entry["resized_size"] == [80, 48]
+    assert entry["patch_grid"] == [3, 5]
+    assert entry["pooling"] == 2
     assert json.loads((cache / "cache.json").read_text())["settings"]["model"] == "fake"
 
 
@@ -119,7 +128,8 @@ def test_resume_recomputes_a_sample_of_finished_images(tmp_path, frames):
 
     summary = build(tmp_path, frames, again, verify=2)
 
-    assert summary.verified == 2 and summary.computed == 0
+    assert summary.verified == 2
+    assert summary.computed == 0
     assert again.calls == 2
 
 
@@ -140,7 +150,8 @@ def test_a_crash_between_file_and_index_is_recomputed(tmp_path, frames):
 
     summary = build(tmp_path, frames, FakeExtractor(), verify=0)
 
-    assert summary.computed == 1 and summary.skipped == 2
+    assert summary.computed == 1
+    assert summary.skipped == 2
     assert set(fc.read_index(tmp_path / "cache")) == {f.path for f in frames}
 
 
@@ -178,7 +189,8 @@ def test_select_frames_by_camera_collection_and_limit(tmp_path):
 
     rgb = fc.select_frames(manifest, "rgb", pinned)
     assert [f.path for f in rgb] == ["V/1.jpeg", "V/2.jpeg", "V/3.jpeg"]
-    assert rgb[0].sha256 == "h1" and rgb[1].sha256 is None
+    assert rgb[0].sha256 == "h1"
+    assert rgb[1].sha256 is None
     thermal = fc.select_frames(manifest, "thermal", pinned)
     assert [f.path for f in thermal] == ["I/1.jpeg", "I/2.jpeg"]  # de-duplicated
     assert thermal[0].camera == "thermal"
@@ -303,8 +315,10 @@ def test_cell_boxes_cover_the_source_image_with_a_partial_edge_cell():
     assert np.allclose(boxes[1, 2], [64 * sx, 32 * sy, 96 * sx, 64 * sy])
     # the last row and column hold one patch row/column: half-size cells
     assert np.allclose(boxes[3, 4], [128 * sx, 96 * sy, 112, 80])
-    assert boxes[:, :, 0].min() == 0 and boxes[:, :, 2].max() == 112
-    assert boxes[:, :, 1].min() == 0 and boxes[:, :, 3].max() == 80
+    assert boxes[:, :, 0].min() == 0
+    assert boxes[:, :, 2].max() == 112
+    assert boxes[:, :, 1].min() == 0
+    assert boxes[:, :, 3].max() == 80
     # cells tile the image: each row's widths sum to the image width
     widths = boxes[0, :, 2] - boxes[0, :, 0]
     assert widths.sum() == pytest.approx(112)
@@ -366,7 +380,8 @@ def test_a_run_writes_the_cache_and_a_run_record_inside_it(tmp_path, dataset):
     cache = tmp_path / "repo/outputs/scratch-features/siglip2-base-naflex-1024tok"
     assert summary.computed == 2
     record = json.loads((cache / "runs/s1/run.json").read_text())
-    assert record["status"] == "completed" and record["scratch"] is True
+    assert record["status"] == "completed"
+    assert record["scratch"] is True
     assert record["config"]["settings"]["token_budget"] == 1024
     assert record["config"]["settings"]["weights_sha256"] == {"model.safetensors": "aa"}
     assert record["config"]["camera"] == "rgb"
@@ -380,8 +395,8 @@ def test_a_run_with_other_settings_refuses_before_starting_a_run(tmp_path, datas
 
     with pytest.raises(fc.CacheError, match="different settings"):
         run_features(tmp_path, dataset, session="s2", pooling=1)
+    other = {"model.safetensors": "zz"}
     with pytest.raises(fc.CacheError, match="different settings"):
-        other = {"model.safetensors": "zz"}
         run_features(
             tmp_path, dataset, session="s3", weights=lambda repo, revision: other
         )
@@ -457,7 +472,7 @@ def test_a_session_lock_blocks_a_second_session_and_is_released(tmp_path, datase
     cache.mkdir(parents=True)
     (cache / "session.lock").write_text("pid 1 session other")
 
-    with pytest.raises(fc.CacheError, match="session.lock"):
+    with pytest.raises(fc.CacheError, match=r"session.lock"):
         run_features(tmp_path, dataset)
     assert not (cache / "runs").exists()  # refused before a run started
 
@@ -481,7 +496,7 @@ CACHE = "repo/outputs/scratch-features/siglip2-base-naflex-1024tok"
 def test_a_frame_only_in_a_fold_manifest_is_selected_after_the_paired_ones(
     tmp_path, dataset
 ):
-    raw, manifests = dataset
+    _raw, manifests = dataset
     write_fold(
         manifests,
         {
@@ -512,7 +527,8 @@ def test_a_frame_only_in_a_fold_manifest_is_selected_after_the_paired_ones(
         "V_1/only_test.jpeg",
         "V_1/only_train.jpeg",
     ]
-    assert frames[2].sha256 == "ht" and frames[3].sha256 is None
+    assert frames[2].sha256 == "ht"
+    assert frames[3].sha256 is None
     thermal = fc.select_frames(
         manifests / "all_pairs.jsonl", "thermal", {}, folds=manifests / "folds"
     )
@@ -530,7 +546,8 @@ def test_a_resume_computes_only_the_frames_the_folds_add(tmp_path, dataset):
     summary = run_features(tmp_path, dataset, session="s2")
 
     after = fc.read_index(cache)
-    assert summary.computed == 1 and summary.skipped == 2
+    assert summary.computed == 1
+    assert summary.skipped == 2
     assert after["V_1/extra.jpeg"]["run"] == "s2"
     assert {p: after[p] for p in before} == before
     record = json.loads((cache / "runs/s2/run.json").read_text())

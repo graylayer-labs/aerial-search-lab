@@ -18,7 +18,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from transformers import AutoModel, Siglip2VisionModel, SiglipVisionModel
+from transformers import AutoModel
+from transformers.models.siglip import SiglipVisionModel
+from transformers.models.siglip2 import Siglip2VisionModel
 
 
 @dataclass(frozen=True)
