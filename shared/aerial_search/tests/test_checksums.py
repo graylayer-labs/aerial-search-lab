@@ -70,7 +70,8 @@ def test_missing_file_detected(tmp_path: Path) -> None:
     (tmp_path / "b_0002" / "sub" / "y.jpg").unlink()
     diff = compare(hash_tree(tmp_path), pinned)
     assert diff.missing == ["b_0002/sub/y.jpg"]
-    assert not diff.changed and not diff.added
+    assert not diff.changed
+    assert not diff.added
 
 
 def test_added_file_detected(tmp_path: Path) -> None:
@@ -79,7 +80,8 @@ def test_added_file_detected(tmp_path: Path) -> None:
     (tmp_path / "a_0001" / "extra.jpg").write_bytes(b"e")
     diff = compare(hash_tree(tmp_path), pinned)
     assert diff.added == ["a_0001/extra.jpg"]
-    assert not diff.changed and not diff.missing
+    assert not diff.changed
+    assert not diff.missing
 
 
 def test_identical_trees_have_no_differences(tmp_path: Path) -> None:
@@ -118,7 +120,7 @@ def pinned_tree(tmp_path: Path):
     source = tmp_path / "remote" / "a_0001"
     source.mkdir(parents=True)
     (source / "x.jpg").write_bytes(b"xx")
-    entries = [e for e in hash_tree(tmp_path / "remote")]
+    entries = list(hash_tree(tmp_path / "remote"))
     return source, entries
 
 
@@ -197,7 +199,7 @@ def test_present_but_different_directory_is_refused_and_kept(
 def test_unknown_directory_name_is_refused(tmp_path: Path, pinned_tree) -> None:
     _, entries = pinned_tree
     for name in ("nope", "../a_0001", "a_0001/x.jpg"):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="pinned list"):
             ensure_directory(
                 name,
                 tmp_path,
@@ -253,7 +255,7 @@ def test_failed_fetch_carries_the_aws_error_text(tmp_path: Path, pinned_tree) ->
             255, command, "", "The security token included in the request is expired"
         )
 
-    with pytest.raises(checksums.FetchError, match="token .* expired"):
+    with pytest.raises(checksums.FetchError, match=r"token .* expired"):
         ensure_directory(
             "a_0001",
             data,

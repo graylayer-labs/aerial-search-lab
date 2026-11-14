@@ -1,4 +1,4 @@
-"""Paired RGB–thermal contrastive learning experiment."""
+"""Paired RGB-thermal contrastive learning experiment."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from aerial_search.models.ssl import ContrastiveEncoders
 
 
 class PairedImages(Dataset[tuple[Tensor, Tensor]]):
-    """RGB–thermal pairs described by a prepared JSONL manifest."""
+    """RGB-thermal pairs described by a prepared JSONL manifest."""
 
     def __init__(self, manifest: Path, data_root: Path, *, augment: bool) -> None:
         self.records = [json.loads(line) for line in manifest.read_text().splitlines()]

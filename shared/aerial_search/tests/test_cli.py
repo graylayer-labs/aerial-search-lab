@@ -294,7 +294,7 @@ def test_detector_refuses_a_checkpoint_pretrained_in_another_fold(
     monkeypatch.setattr(
         detection_experiment, "run_detection_experiment", lambda *a, **k: None
     )
-    with pytest.raises(SystemExit, match="210417_MtErie.*220109_Baker"):
+    with pytest.raises(SystemExit, match=r"210417_MtErie.*220109_Baker"):
         cli.main(
             [
                 "train-detector",
@@ -414,7 +414,8 @@ def test_prepare_scratch_records_scratch_and_skips_the_data_check(
     monkeypatch.setattr(cli, "prepare_manifests", fake_prepare)
     cli.main(["prepare", str(tmp_path), "--scratch"])
     assert seen["provenance"] == {"commit": "abc", "scratch": True, "dirty": " M x"}
-    assert seen["verify"] is False and seen["force"] is False
+    assert seen["verify"] is False
+    assert seen["force"] is False
 
 
 def test_normal_prepare_verifies_and_passes_scratch_false(

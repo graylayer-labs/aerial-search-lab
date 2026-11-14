@@ -6,7 +6,10 @@ back to the default credentials, or a cloud job hashes the wrong directory.
 """
 
 import importlib.util
+import sys
 from pathlib import Path
+
+import pytest
 
 from aerial_search import run
 from aerial_search.cloud import entry, source
@@ -32,14 +35,23 @@ def test_the_settings_file_is_the_repositorys_own() -> None:
     assert checksums.SETTINGS.is_file()
 
 
-def test_the_sagemaker_entry_script_puts_the_shared_package_on_the_path() -> None:
+def test_the_sagemaker_entry_script_puts_the_shared_package_on_the_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    called: list[bool] = []
+    monkeypatch.setattr(entry, "main", lambda: called.append(True))
     script = workspace_root() / "tools" / "sagemaker_entry.py"
     spec = importlib.util.spec_from_file_location("sagemaker_entry", script)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert workspace_root() / "shared" / "aerial_search" / "src" == module.SOURCE
     assert (module.SOURCE / "aerial_search" / "__init__.py").is_file()
+    module.main()  # a broken import inside main() fails here, not in a paid job
+    assert called == [True]
+    assert str(module.SOURCE) == sys.path[0]
 
 
 def test_the_job_puts_every_member_source_on_the_path(tmp_path: Path) -> None:

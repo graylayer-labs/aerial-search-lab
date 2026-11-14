@@ -65,7 +65,7 @@ def pinned_data(tmp_path: Path):
     )
     DATA.clear()
     DATA.update(manifests=manifests, data_root=root, pinned=pinned)
-    yield DATA
+    return DATA
 
 
 def write_quality(manifests: Path, provenance: dict | None, data: dict | None) -> None:
@@ -342,7 +342,7 @@ def test_checkpoint_from_another_fold_is_refused(repo: Path, tmp_path: Path) -> 
     ckpt = make_checkpoint(
         tmp_path / "p", scratch=False, fold="210417_MtErie", view="paired"
     )
-    with pytest.raises(ProvenanceError, match="210417_MtErie.*220109_Baker"):
+    with pytest.raises(ProvenanceError, match=r"210417_MtErie.*220109_Baker"):
         run(repo, checkpoint=ckpt, fold="220109_Baker", view="paired")
     assert not (repo / "outputs").exists()
 
@@ -351,7 +351,7 @@ def test_checkpoint_from_another_view_is_refused(repo: Path, tmp_path: Path) -> 
     ckpt = make_checkpoint(
         tmp_path / "p", scratch=False, fold="220109_Baker", view="rgb"
     )
-    with pytest.raises(ProvenanceError, match="view.*rgb.*paired"):
+    with pytest.raises(ProvenanceError, match=r"view.*rgb.*paired"):
         run(repo, checkpoint=ckpt, fold="220109_Baker", view="paired")
 
 
@@ -359,7 +359,7 @@ def test_checkpoint_whose_run_has_no_fold_is_refused(
     repo: Path, tmp_path: Path
 ) -> None:
     ckpt = make_checkpoint(tmp_path / "p", scratch=False)
-    with pytest.raises(ProvenanceError, match="fold null.*220109_Baker"):
+    with pytest.raises(ProvenanceError, match=r"fold null.*220109_Baker"):
         run(repo, checkpoint=ckpt, fold="220109_Baker", view="paired")
 
 
@@ -484,7 +484,7 @@ def test_normal_run_refuses_missing_scratch_or_unverified_manifests(
     with pytest.raises(ProvenanceError, match="manifests"):
         run(repo, manifests=None)
     (manifests / "data_quality.json").unlink()
-    with pytest.raises(ProvenanceError, match="data_quality.json"):
+    with pytest.raises(ProvenanceError, match=r"data_quality.json"):
         run(repo)
     write_quality(manifests, {"commit": "abc", "scratch": True}, good["data"])
     with pytest.raises(ProvenanceError, match="scratch"):
@@ -516,7 +516,8 @@ def test_scratch_run_needs_no_manifests_record(repo: Path) -> None:
             run(repo, scratch=True, manifests=None, data_root=None) / "run.json"
         ).read_text()
     )
-    assert data["data"] is None and data["provenance"] is None
+    assert data["data"] is None
+    assert data["provenance"] is None
 
 
 def test_code_state_gives_commit_for_a_clean_tree_on_main(repo: Path) -> None:
@@ -533,7 +534,8 @@ def test_code_state_refuses_a_dirty_tree_unless_scratch(repo: Path) -> None:
     with pytest.raises(ProvenanceError, match="uncommitted"):
         code_state(scratch=False, repo=repo)
     state = code_state(scratch=True, repo=repo)
-    assert state["dirty"] and state["commit"]
+    assert state["dirty"]
+    assert state["commit"]
 
 
 def test_outputs_dir_is_where_start_run_writes(repo: Path) -> None:
