@@ -1,73 +1,28 @@
 # aerial-search-lab
 
-Read the intent first. It explains why the project exists and how decisions are
-made, and it overrides anything below that conflicts with it.
+Process (roles, board, approvals, updates, limits, review, commits): see
+~/.claude/rules/kitchen.md and the playbooks in ~/.claude/skills/.
+
+A lab of approaches that detect people in drone RGB and thermal footage with
+few labels, all scored by one shared evaluation. Read the intent first; it
+overrides anything below that conflicts with it.
 
 @INTENT.md
 
-## Who does what
+## Where to look
 
-Eoin is the Product Owner. Claude agents do the engineering and run the
-project day to day. Act without asking, except in the areas listed under
-"Ask the owner first".
+Open the row you need; do not list folders and guess.
 
-The main session is the lead. It plans, delegates, judges results, and talks
-to the owner. It does not do routine work itself.
-
-- **Delegate and keep working.** Start agents in the background, each in its
-  own worktree, and carry on with other things while they run.
-- **Take back conclusions, not transcripts.** Every agent returns a short
-  report. The detail goes on the issue, where the next agent can find it.
-- **Run independent tasks in parallel**, up to two agents at a time. The
-  epic's "Order of work" says which tasks are independent. One agent per
-  issue.
-- **Verify before trusting.** Re-run the checks an agent reports, and test
-  its most important claim yourself.
-- **Push after verifying.** Agents commit on their branch and stop. The lead
-  pushes and opens the PR once it has re-run their checks.
-- **Say who did the work.** The `agent:` label records the plan. If the lead
-  does an issue itself, or a different model is used, the handoff says so
-  and why.
-- **Write the brief as if to a stranger.** An agent knows only what its
-  prompt and the issue tell it.
-
-## Every session
-
-Agent sessions end and context is lost. The project board is the memory.
-
-1. **Start** with `/pickup`. It reads the board and open issues and tells you
-   what is in progress and what is next. Do not start work from memory of a
-   previous conversation.
-2. **Work** on one issue at a time: one issue, one branch, one PR.
-3. **Record as you go.** Decisions, results, and dead ends go in a comment on
-   the issue, not only in the conversation.
-4. **End** with `/handoff`, even if the task is unfinished. The next agent
-   should be able to continue from the issue alone.
-5. **Keep the lead's session short.** Its whole history is sent again on
-   every turn, so a session left open for days costs more with each message.
-   The lead ends with `/handoff` and starts a new session with `/pickup` when
-   an epic closes, and at least once a day.
-
-If there is no issue for the work, create one from the task template. Every
-PR closes an issue; a PR that would only reference one gets its own issue
-first, however small. Dependabot PRs are the one exception: they close no
-issue, and the lead merges them when `checks` passes.
-
-## Leave a trail
-
-Assume the next reader is an agent that has never seen this project. Every
-finished issue gets a closing comment, written with `/handoff`, that states:
-
-- what was done, with links to the PR and commits
-- the evidence: commands run and their output, or the numbers and the config
-  that produced them
-- decisions made and why
-- what was tried and did not work
-- what was found but left alone, and the issue that now tracks it
-
-Then add one line to the parent issue's "Decisions so far" list, linking to
-the closed issue. The parent stays a short index; the detail stays in the
-child.
+| You need | Open |
+|---|---|
+| Which folder does what, where to start | `docs/knowledge/map.md` |
+| How to run or change things: setup, data, experiments, cloud runs, diagrams, signing | `docs/knowledge/recipes.md` |
+| Why it is built this way | `docs/knowledge/decisions.md` (points to `docs/decisions.md`) |
+| Traps (zsh, gh, worktrees, CI, AWS names) | `docs/knowledge/gotchas.md` |
+| What changed lately | `docs/progress.md`, `CHANGELOG.md` |
+| Evidence behind a decision | `docs/<topic>-review.md` (pairing, site folds, metric) |
+| What a milestone found | `docs/milestones/<name>.md` |
+| How it was built, step by step | `docs/guide/` (raw notes in `docs/guide/notes/<issue>.md`) |
 
 ## The board
 
@@ -182,74 +137,6 @@ CI proves the code runs. It does not prove a result is valid.
 
 `.claude/settings.json` backs these up with permission rules. The rules are a
 safety net, not the definition; this list is.
-
-### Record every approval
-
-When the owner approves something on this list, quote their words and the
-date in a comment on the issue, before acting. An approval that lives only in
-a conversation is lost when the session ends.
-
-### When a task needs the owner partway through
-
-Some issues have one step only the owner can do, such as looking at a figure.
-Do everything else first. Then add the `needs-owner` label, leave the issue
-In Progress, open what they need to see, and ask them in the conversation.
-Do not close the issue or tick that criterion yourself.
-
-## Keeping the owner informed
-
-The lead runs the work and keeps the owner aligned; the owner steers when
-needed. The owner reads only the end of each message and sees only what is
-put in front of them. They do not browse the repo or the board unprompted.
-
-### When to send an update
-
-- When something merges or closes, a result arrives, good or bad, or a step
-  needs the owner. Not on every agent notification. Things that finish
-  together make one update.
-- When the owner is present and has heard nothing for 30 minutes, send one
-  line: what is running and when the next news is due. Silence reads as
-  stalled.
-
-### What an update looks like
-
-Ten lines at most, in plain words, in this order:
-
-1. **Done:** one line per finished thing, saying what it means for the
-   project, with its issue or PR number.
-2. **Running:** one line.
-3. **Insight**, optional, at most one: something learned that a senior
-   engineer would find worth knowing. It also goes in the issue's guide note.
-4. **Last line:** the one thing needed from the owner, with exact steps, or
-   "Nothing needed from you."
-
-Explain a term the first time the owner meets it. Give each thing one name:
-the epic's name, not "milestone 1". Leave out model IDs, agent IDs, and paths
-unless the owner must act on one.
-
-### Decide or ask
-
-- Decide alone anything reversible that is not under "Ask the owner first".
-  Report it as done, with the alternative: "I chose X; say if you want Y."
-  Do not ask a yes-or-no question about it.
-- Ask only for what is under "Ask the owner first", a change of direction
-  (another model family, dataset, or epic goal), or a step only the owner can
-  do. One ask at a time.
-- An unanswered ask waits on its issue under `needs-owner`. Repeat it only
-  when it blocks the next task, and say that it does.
-- Do not report usage in updates. The owner sees it in their status line.
-  Mention it only when the plan is above 80%, or before one piece of work
-  that is unusually expensive, with what it buys.
-
-### Showing things
-
-- When something needs their eyes, open it (`open <url>` or `open <file>`)
-  and say what to look at and why. Put the key content in the message; never
-  reply with only a path.
-- Do not leave placeholders in files for the owner to fill in.
-- When an epic starts, send its goal, order of work, expected cost, and the
-  steps that will need the owner, in five lines.
-- End each session with an update in the form above.
 
 ## Commit signing
 
@@ -613,70 +500,3 @@ to its issue or PR. No version numbers.
 
 Test what would silently corrupt results: pairing, splits, label handling,
 metrics. Skip tests that only restate the implementation.
-
-## Model tiering
-
-The owner pays for usage. Use the cheapest model that can do the job well.
-
-### Usage budget
-
-On 2026-10-01 one afternoon of agents used about 2.7 million tokens and
-reached 90% of the owner's plan. These rules exist because of that. Keep
-them quietly: on 2026-10-02 the owner asked the lead to stop reporting and
-tallying usage ("youre burning tokens caring about tokens").
-
-- Sonnet is the default for every agent. Opus only where a wrong answer
-  corrupts results: pairing, splits, metrics, and their reviews.
-- One review per PR. A second review only if the first found something
-  blocking. Docs, config, tools, and small guards are read by the lead.
-- Cap every agent report at 60 lines, and say so in the brief.
-- Work that means looking at hundreds of images one by one goes to the owner
-  or to a cheaper method, not to an agent.
-- Above 80% of the plan: no new agents. The lead does cheap work only until
-  usage resets. The owner's status line saves the current figures to
-  `~/.claude/usage-latest.json`; read it before starting an agent. If the
-  file is missing or stale, carry on.
-
-Each issue carries an `agent:<model>` label. It names the model, and the
-table says which agent to run on it.
-
-| Label | Kind of work | Who does it |
-|---|---|---|
-| `agent:fable` | Milestone design, experiment analysis, final judgement | The main session |
-| `agent:opus` | Implementation where a wrong answer is costly, hard debugging | `implementer`, with the model set to Opus |
-| `agent:sonnet` | Implementing a well-specified issue | `implementer` |
-| `agent:haiku` | Mechanical edits | `implementer`, with the model set to Haiku |
-| `agent:haiku` | Read-only audits | `repo-janitor` |
-
-- To set the model, pass `model` on the Agent call, for example
-  `subagent_type: "implementer", model: "opus"`. Without it, `implementer`
-  runs on Sonnet.
-- Where a label fits two rows, the issue's "Suggested model" section says
-  which agent to use.
-
-Agents that are not tied to a label:
-
-| Agent | Model | Use |
-|---|---|---|
-| `reviewer` | Opus | Reviews a branch before merge. Never implements |
-| `researcher` | Sonnet | Surveys with cited sources. Changes nothing |
-| `process-auditor` | Sonnet | Checks that protocols were followed; fixes process records |
-| `repo-janitor` | Haiku | Reports drift and clutter in the repo. Changes nothing |
-| `guide-writer` | Sonnet | Keeps `docs/guide/` current from closed issues; drafts blog posts. Writes only under `docs/guide/` and `docs/blog/` |
-
-## Keeping the project honest
-
-| Skill | Checks | Run it |
-|---|---|---|
-| `/tidy` | The repo: stale docs, dead code, stray files | End of every epic |
-| `/audit` | The process: trails, evidence, reviews, board, agent files | End of every epic, and after every five closed issues |
-| `/coldstart` | The instructions: can a new agent orient itself | After any change to this file, an agent, or a skill |
-| `/guide` | Nothing; it updates `docs/guide/` from closed issues, every number linked to its source | End of every epic, after the milestone write-up |
-| `/blog` | Nothing; it drafts a post from the guide and the milestone note, for the owner to edit and publish | End of every epic, after `/guide` |
-
-## Reusable tooling
-
-When you do something by hand that a future agent or another project would
-repeat, add a comment to issue #9: what the step was, and whether it fits a
-skill, a command, an agent, or a hook. Do not build it on the spot unless the
-current issue asks for it.

@@ -21,7 +21,7 @@ description: Audit the repository for drift and clutter, then apply the safe cle
 5. Run `uv run pytest` and `uv run ruff check .`.
 6. Review before merge as `CLAUDE.md` describes, and say in the PR which
    review happened.
-7. Open a PR as `CLAUDE.md` describes. Tell the owner what changed and what
+7. Open a PR as the `flow-github` playbook describes. Tell the owner what changed and what
    was left.
 
 ## Rules

@@ -30,10 +30,11 @@ conversations.
    "Order of work" section says what comes next. The epic itself is not a
    task.
 5. For each item that is **In progress**, read the issue in full, body and
-   comments, with the command under "The board" in `CLAUDE.md`. The last
+   comments, with the command under "Work the board from the command line" in
+   `docs/knowledge/recipes.md`. The last
    handoff comment says where the work stopped.
-6. Report to the owner as an update, in the form under "Keeping the owner
-   informed" in `CLAUDE.md`. Cover:
+6. Report to the owner as an update, in the form of the `owner-update`
+   skill. Cover:
    - What is in progress and where it stopped. If no task is in progress, say
      so.
    - What is ready to start next, following the epic's order of work.
@@ -42,10 +43,10 @@ conversations.
 7. Pick the next issue and say which one and why. Tasks the epic marks as
    independent may run in parallel, up to two agents at a time. Start on it unless it is
    labelled `needs-owner` or falls under "Ask the owner first" in
-   `CLAUDE.md`. Its `agent:` label names the model; the tiering table in
-   `CLAUDE.md` says which agent to run.
+   `CLAUDE.md`. Its `agent:` label names the model; `implementer` runs it with
+   that model (`~/.claude/rules/kitchen.md`).
 8. Check that the task's data is reachable before starting. See "Data" in
-   `CLAUDE.md`.
+   `CLAUDE.md` and `docs/knowledge/gotchas.md`.
 
 ## Rules
 
