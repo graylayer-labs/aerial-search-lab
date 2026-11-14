@@ -28,6 +28,6 @@ description: Draft a blog post for a milestone, from the guide and the milestone
 ## Rules
 
 - The post is a draft for the owner. Do not publish it or post it anywhere.
-  Publishing is on the "Ask the owner first" list in `CLAUDE.md`.
+  Publishing is the owner's (`CLAUDE.md`, Repo rules).
 - No number without a source in the guide or a note.
 - Report negative results as plainly as positive ones.

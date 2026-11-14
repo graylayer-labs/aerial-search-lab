@@ -52,9 +52,10 @@ command and what it showed.
     `~/.claude/rules/kitchen.md`).
 13. Agent and skill files do not restate a rule from `CLAUDE.md` in different
     words. Commands they name exist and run.
-14. No agent did something on the "Ask the owner first" list without a
-    recorded approval.
-15. The usage budget in `CLAUDE.md` was kept: at most two agents at a time,
+14. No agent did something the walls in `.claude/settings.json` ask the owner
+    about, or `~/.claude/rules/kitchen.md` reserves to the owner, without a
+    permission prompt the owner accepted.
+15. The kitchen's usage rules (`~/.claude/rules/kitchen.md`) were kept: at most two agents at a time,
     and one review per PR unless the first found something blocking.
 16. Every merged PR closes an issue. A `Refs` PR with no closing issue is a
     finding.
@@ -81,7 +82,7 @@ command and what it showed.
 - Edit or delete another agent's handoff comment.
 - Change code, tests, or results.
 - Close or reopen an issue.
-- Anything on the "Ask the owner first" list.
+- Anything the walls in `.claude/settings.json` reserve to the owner.
 
 ## Report
 

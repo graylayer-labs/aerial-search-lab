@@ -24,158 +24,59 @@ Open the row you need; do not list folders and guess.
 | What a milestone found | `docs/milestones/<name>.md` |
 | How it was built, step by step | `docs/guide/` (raw notes in `docs/guide/notes/<issue>.md`) |
 
-## The board
-
-- Board: https://github.com/orgs/graylayer-labs/projects/1 (project number 1,
-  owner `graylayer-labs`). It is public.
-- Issues: https://github.com/graylayer-labs/aerial-search-lab/issues
-- Status lives on the board only: Todo, In Progress, Done.
-- **Epics** are parent issues labelled `epic`, one per milestone. Work that
-  belongs to one milestone is a sub-issue of its epic. The epics in order are
-  the roadmap; there is no separate roadmap document.
-- **Work that crosses milestones** (docs, process, tooling, audits) is a
-  standalone issue on the board with no parent. It needs no epic and no
-  label beyond `type:`.
-- GitHub's own milestone field is not used. The epic is the milestone.
-- Only the current epic has sub-issues. Later epics hold a short description
-  and get their tasks when the one before them closes.
-- The owner watches the board's "Now" view (everything not Done, grouped by
-  status) and the comments on In Progress issues. Keep both current; there
-  is no end-of-milestone reveal.
-- The current epic's body has an "Order of work" section. Follow it. The
-  board does not rank tasks.
-- An epic is In Progress for as long as any of its tasks is open. That row is
-  not a task; look at its sub-issues.
-- `gh project` commands fail now and then with `unknown owner type`. Run the
-  command again.
-
-```bash
-# attach issue <child> to epic <parent> (needs the child's id, not its number)
-CHILD_ID=$(gh api repos/graylayer-labs/aerial-search-lab/issues/<child> --jq .id)
-gh api -X POST repos/graylayer-labs/aerial-search-lab/issues/<parent>/sub_issues \
-  -F sub_issue_id=$CHILD_ID
-```
-
-```bash
-gh project item-list 1 --owner graylayer-labs --format json --limit 100   # status
-# to read one field, add --jq to this command. Piping its JSON into a
-# separate jq can fail on control characters in issue text.
-
-# read a task in full. `gh issue view <n> --comments` can omit the body.
-gh issue view <n> --json title,body,labels,comments --jq \
-  '.title, ([.labels[].name] | join(", ")), .body,
-   (.comments[] | "--- comment " + .createdAt, .body)'
-
-# move an item (get <item-id> from item-list)
-gh project item-edit --project-id PVT_kwDOEDMalc4BlE5m --id <item-id> \
-  --field-id PVTSSF_lADOEDMalc4BlE5mzhjzG-Q --single-select-option-id <option>
-# options: Todo f75ad846 · In Progress 47fc9ee4 · Done 98236657
-```
-
-Labels in use: `agent:fable|opus|sonnet|haiku` (which model), `type:bug`,
-`type:enhancement`, `type:documentation`, `type:experiment`, `epic`,
-`needs-owner` (blocked on the owner), and `tooling-candidate`. The `data:`,
-`model:`, `source:`, and `status:` labels come from the org template and are
-not used here.
-
-Two standing issues never close: "Reusable tooling candidates" (#9) and
-"Audit log" (#24).
-
-## Do freely
-
-- Create branches, commit, push branches, open and update PRs.
-- Create, edit, comment on, and close issues. Update the board.
-- Merge PRs. `main` is protected: nothing is pushed to it directly, a PR
-  merges only when the `checks` CI job passes, and every commit must be
-  signed. No human review is required. Merge through GitHub and never
-  locally.
-  Set a PR to merge itself with `gh pr merge <n> --auto --squash`.
-- Delete superseded code and docs. Git history is the archive.
-- Delete and regenerate anything under `data/manifests/` and `outputs/`.
-  These are produced by committed code.
-- Short laptop runs.
-- Free or near-free AWS: S3 storage for project data, and free-tier
-  instances.
-- Cloud GPU runs up to EUR 15 per run and EUR 60 per calendar month,
-  launched with `aerial-search sagemaker-train` (see "Cloud run" under
-  Experiments) after asking `aws-manager` for the month-to-date spend. The
-  owner set these limits on 2026-10-14 (#109) and confirmed them on #125 on
-  2026-10-15. Runs are SageMaker training jobs on managed spot with
-  checkpoints, so a run always terminates and an interruption resumes. Spot
-  only: AWS declined the on-demand quota on 2026-10-15 (#115).
-
-### Review before merge
-
-CI proves the code runs. It does not prove a result is valid.
-
-- Changes to logic under any `src/` (shared or a project), to experiments,
-  or to metrics: the `reviewer` agent checks the branch before auto-merge is
-  set.
-- Docs, config, and formatting-only changes: the main session reads the diff
-  itself.
-- Say in the PR which of the two happened.
-- The PR's Evidence section holds the pasted output of the lead's own re-run
-  of the checks, not a summary such as "all passed".
-
-## Ask the owner first
-
-- Any paid compute or service not covered by the cloud GPU limits under
-  "Do freely" (including on-demand), or spending beyond them. Give the
-  reason a laptop run will not do and a cost estimate.
-- Deleting raw data under `data/raw/` or anything in S3, or anything else
-  that cannot be recovered.
-- Force-pushing, rewriting history, or deleting a remote branch that has
-  unmerged work.
-- Changing the purpose, standard, or non-goals in `INTENT.md`.
-- Anything public beyond the repo itself: blog posts, releases, repo
-  visibility or settings, making the board public.
-- Installing third-party plugins, skills, hooks, or MCP servers.
-- A laptop run expected to take over an hour. Prefer a cloud GPU run within
-  the limits under "Do freely".
-- Merging a PR that the reviewer flagged.
-- Changing branch protection or other repository settings.
-
-`.claude/settings.json` backs these up with permission rules. The rules are a
-safety net, not the definition; this list is.
-
-## Commit signing
-
-Every commit is signed, on branches as well as on `main`. The repository's
-local git config signs with an SSH key made for this project,
-`~/.ssh/ssl_aerial_signing_ed25519`, which is registered on the owner's
-GitHub account as a signing key. The key has no passphrase so that agents can
-sign; it signs commits and nothing else.
-
-- Agent worktrees share the repository's config, so they sign too.
-- If a commit fails with a signing error, the key is missing: a fresh machine
-  needs its own key, registered on GitHub, and the three `git config --local`
-  lines in issue #27.
-- Never copy the private key anywhere, and never commit it.
-
 ## Commands
 
 ```bash
-uv sync --dev                  # install the workspace: shared and every project
-uv run pytest                  # tests of shared/ and projects/
-uv run pytest projects/<name>  # one project's tests
-uv run ruff check --fix .      # lint
-uv run ruff format .           # format
-uv run ty check                # types
-tools/install_archify.sh       # one-time: install the Archify diagram skill
+uv sync --dev          # install the workspace; a fresh worktree has no environment
+uv run pytest          # tests of shared/ and projects/
+uv run ruff check --fix . && uv run ruff format . && uv run ty check
 ```
 
-- CI runs all four checks: ruff check, ruff format, ty, and pytest.
-- The root is a uv workspace, not a package. Its `dev` group lists every
-  member, so `uv sync --dev` installs them all without `--all-packages` (the
-  org CI runs plain `uv sync --dev --locked`).
-- Inside an agent worktree, `uv run` warns that `VIRTUAL_ENV` does not match.
-  It is harmless. Prefix the command with `env -u VIRTUAL_ENV` to silence it.
-- A fresh worktree has no environment. Run `uv sync --dev` first.
-- The shell is zsh. It does not split `$var` into words, reads `$VAR:r` as a
-  modifier, and fails on an unmatched glob. Run multi-line scripts as
-  `bash <<'EOF'` and write `${VAR}`. macOS has no `timeout`.
-- Before a timed laptop run, check the laptop is on mains power and run it
-  under `caffeinate -dims`, so sleep or a locked screen cannot spoil it.
+CI runs these four checks. More in `recipes.md`.
+
+## Board
+
+- Board: https://github.com/orgs/graylayer-labs/projects/1 (project number 1,
+  owner `graylayer-labs`, public). Issues:
+  https://github.com/graylayer-labs/aerial-search-lab/issues
+- Project id `PVT_kwDOEDMalc4BlE5m`; Status field id
+  `PVTSSF_lADOEDMalc4BlE5mzhjzG-Q`; options Todo `f75ad846`, In Progress
+  `47fc9ee4`, Done `98236657`. Status lives on the board only.
+- Epics are parent issues labelled `epic`, one per milestone; their sub-issues
+  are the tasks. The epic is the milestone (GitHub's milestone field is
+  unused). Only the current epic has sub-issues; follow its "Order of work".
+  An epic row stays In Progress while any task is open. Work that crosses
+  milestones is a standalone issue with no parent.
+- Labels: `agent:fable|opus|sonnet|haiku`, `type:bug|enhancement|documentation|
+  experiment`, `epic`, `needs-owner`, `tooling-candidate`. The org template's
+  `data:`, `model:`, `source:`, `status:` labels are unused.
+- Two standing issues never close: "Reusable tooling candidates" (#9) and
+  "Audit log" (#24). A step done by hand that others would repeat: comment on #9.
+- Commands to attach sub-issues, read a task and move an item:
+  `recipes.md`.
+
+## Repo rules
+
+- `main` is protected: a PR merges only when the `checks` and `gate` CI jobs
+  pass (`gate` is the org check: title, issue link, size under 400 lines,
+  protected paths), every commit is signed (setup in `recipes.md`), and merging goes through GitHub,
+  never locally (`gh pr merge <n> --auto --squash`).
+- Every PR closes an issue, except Dependabot PRs: the lead merges those when
+  `checks` and `gate` pass.
+- Logic under any `src/`, experiments and metrics are checked by the
+  `reviewer` agent before auto-merge; docs and config are read by the lead.
+  The PR says which, and its Evidence section holds the pasted output of the
+  lead's own re-run of the checks.
+- Project agents and skills live in `.claude/agents/` and `.claude/skills/`
+  (`/tidy`, `/audit`, `/coldstart`, `/guide`, `/blog`). A rule change here is
+  carried into the file that implements it, in the same PR.
+- Opus only where a wrong answer corrupts results: pairing, splits, metrics
+  and their reviews.
+- Walls in `.claude/settings.json`: no force-push or push to `main`; no
+  deletion under `data/raw/` or in S3 (`aws s3 rm|rb|sync --delete` denied);
+  no `npm install`; Archify `brands` and `preview` denied (no brand URLs,
+  never `--open`); `aws *`, `gh repo edit|delete`, `gh release` ask the owner.
+  Publishing a blog post, release or repo setting is the owner's.
 
 ## Diagrams
 

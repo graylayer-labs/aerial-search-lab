@@ -19,7 +19,7 @@ description: Update the follow-along guide in docs/guide/ from the issues closed
    scratch path.
 5. Run `uv run ruff check .` and `uv run ruff format --check .`.
 6. This is a docs-only change, so the main session reads the diff itself, as
-   `CLAUDE.md` describes. Say so in the PR.
+   `CLAUDE.md` (Repo rules) describes. Say so in the PR.
 7. Push and open the PR once the checks pass. Tell the owner which chapters
    changed and what the agent could not source.
 
