@@ -6,6 +6,17 @@ each links to the issue or pull request that holds the detail.
 
 ## Across epics
 
+### 2026-11-14
+
+**Rule change (how work is done)**
+- `CLAUDE.md` shrank from 682 to about 160 lines and keeps project facts only.
+  Process (roles, asking the owner, approvals, updates, usage limits, model
+  tiering) is the kitchen's (`~/.claude/rules/kitchen.md`); the "Record every
+  approval" rule is gone. Procedures, layout and traps moved to the new
+  `docs/knowledge/` (map, recipes, decisions, gotchas), and agent and skill
+  files point there.
+  ([#144](https://github.com/graylayer-labs/aerial-search-lab/issues/144))
+
 ### 2026-10-23
 
 **Change of method / layout**
