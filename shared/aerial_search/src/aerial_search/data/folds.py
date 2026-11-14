@@ -22,6 +22,7 @@ Views: ``paired`` (pairs labelled in both cameras), ``rgb``, ``thermal``.
 from __future__ import annotations
 
 import bisect
+import itertools
 import json
 import math
 import random
@@ -678,7 +679,7 @@ def check_folds(
                 )
             if _keys(files[train_file(percents[-1])]) & _keys(files[VALIDATION]):
                 problems.append(f"{fold}/{view}: training and validation overlap")
-            for smaller, larger in zip(percents, percents[1:], strict=False):
+            for smaller, larger in itertools.pairwise(percents):
                 a = {json.dumps(r) for r in files[train_file(smaller)]}
                 b = {json.dumps(r) for r in files[train_file(larger)]}
                 if not a <= b:

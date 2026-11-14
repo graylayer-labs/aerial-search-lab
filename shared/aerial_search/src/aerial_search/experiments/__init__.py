@@ -2,4 +2,4 @@
 
 from __future__ import annotations
 
-__all__ = ["run_experiment", "run_detection_experiment"]
+__all__ = ["run_detection_experiment", "run_experiment"]

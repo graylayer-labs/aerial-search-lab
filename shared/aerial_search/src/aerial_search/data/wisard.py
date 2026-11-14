@@ -16,7 +16,7 @@ from aerial_search.data import checksums
 
 @dataclass(frozen=True)
 class ImagePair:
-    """Paths for one synchronized RGB–thermal observation."""
+    """Paths for one synchronized RGB-thermal observation."""
 
     collection_id: str
     rgb_image: Path
