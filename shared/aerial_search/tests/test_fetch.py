@@ -2,7 +2,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from aerial_search.data.fetch import (
     DatasetSource,
     _download_resumable,

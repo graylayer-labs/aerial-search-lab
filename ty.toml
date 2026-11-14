@@ -1,0 +1,25 @@
+# Standard ty config for Python repos in every account
+# (reference/repo-standard.md). Copy it to the repo root unchanged; ty.toml
+# wins over any [tool.ty] in pyproject.toml, so keep that table out.
+#
+# No suppressions: agents never add `# ty: ignore`, `# type: ignore` or an
+# "ignore" rule level (hooks/suppression-guard.sh). The owner decides.
+
+[environment]
+# Match the repo's requires-python (the standard is >= 3.12).
+python-version = "3.12"
+# The template is copied, not installed; resolve its imports from its source.
+extra-paths = ["projects/_template/src"]
+
+[analysis]
+# `# type: ignore` hides any error with no rule named. Not honoured: an owner
+# suppression is `# ty: ignore[<rule>]`, which names what it hides.
+respect-type-ignore-comments = false
+
+[rules]
+# Warnings by default; these catch real bugs, so they fail the check.
+possibly-unresolved-reference = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+unused-ignore-comment = "error"
+redundant-cast = "error"

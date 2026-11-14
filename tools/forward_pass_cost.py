@@ -33,10 +33,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from frozen_head.backbone import SPECS, Spec, load, pool2, weight_checksums
 from PIL import Image
 from transformers import AutoImageProcessor
-
-from frozen_head.backbone import SPECS, Spec, load, pool2, weight_checksums
 
 TILE = 2  # a 1024 px frame is a 2x2 grid of 512 px tiles
 

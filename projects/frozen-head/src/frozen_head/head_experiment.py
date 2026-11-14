@@ -21,8 +21,6 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn.functional as functional
-from numpy.typing import ArrayLike
-
 from aerial_search.data.records import record_boxes, select_records
 from aerial_search.evaluation.detection import (
     DetectionReport,
@@ -30,6 +28,8 @@ from aerial_search.evaluation.detection import (
     Prediction,
     evaluate_detections,
 )
+from numpy.typing import ArrayLike
+
 from frozen_head.feature_cache import (
     CacheError,
     _feature_path,

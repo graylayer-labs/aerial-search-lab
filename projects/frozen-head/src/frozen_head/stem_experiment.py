@@ -34,9 +34,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image
-from torch import Tensor
-
 from aerial_search.data.folds import TEST, VALIDATION, train_file, view_dir
 from aerial_search.data.records import load_split, record_boxes
 from aerial_search.evaluation.detection import (
@@ -44,6 +41,9 @@ from aerial_search.evaluation.detection import (
     Prediction,
     evaluate_detections,
 )
+from PIL import Image
+from torch import Tensor
+
 from frozen_head.backbone import NaflexExtractor, Prepared
 from frozen_head.feature_cache import CacheError
 from frozen_head.head import CentreHead, centre_loss
@@ -380,6 +380,7 @@ def run_stem_head(
     """
     from aerial_search import run as run_module
     from aerial_search.data import checksums
+
     from frozen_head import backbone
 
     if camera != "thermal":

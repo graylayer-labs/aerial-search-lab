@@ -10,7 +10,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from frozen_head import feature_cache as fc
 
 ROOT = Path(__file__).resolve().parents[3]

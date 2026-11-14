@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from aerial_search import run as run_module
 from aerial_search.run import ProvenanceError, finish_run, start_run
 

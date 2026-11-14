@@ -13,6 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from aerial_search import cli as shared
+
 from finetuned_detector import experiment as baseline_experiment
 
 HELP = shared.PROJECT_COMMANDS
@@ -176,7 +177,6 @@ def main(argv: list[str]) -> None:
     args = build_parser().parse_args(argv)
     if args.command == "train-baseline":
         import torch
-
         from aerial_search import run
 
         names = ("arch", "input", "steps", "batch_size", "learning_rate")

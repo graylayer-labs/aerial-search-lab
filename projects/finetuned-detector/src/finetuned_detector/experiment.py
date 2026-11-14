@@ -29,10 +29,6 @@ from typing import Any
 import numpy as np
 import torch
 import torchvision.transforms.v2.functional as vision
-from numpy.random import mtrand
-from torch.utils.data import DataLoader, Dataset
-from torchvision.io import ImageReadMode, decode_image
-
 from aerial_search.data import tiling
 from aerial_search.data.records import record_boxes, select_records, subsample
 from aerial_search.evaluation.detection import (
@@ -47,6 +43,9 @@ from aerial_search.evaluation.predictions import (
     read_model_id,
     score_file,
 )
+from numpy.random import mtrand
+from torch.utils.data import DataLoader, Dataset
+from torchvision.io import ImageReadMode, decode_image
 
 ARCHITECTURES = (
     "fasterrcnn_mobilenet_v3_large_fpn",

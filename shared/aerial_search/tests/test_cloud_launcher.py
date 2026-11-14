@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from aerial_search import PACKAGE_DIR
 from aerial_search import run as run_module
 from aerial_search.cloud import cost, launcher, source
@@ -18,9 +17,7 @@ from aerial_search.cloud import cost, launcher, source
 # --- the request ------------------------------------------------------------------
 
 BASE: dict[str, Any] = {
-    "logical_run": (
-        "detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7"
-    ),
+    "logical_run": "detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7",
     "attempt": 1,
     "commit": "a" * 40,
     "source_sha256": "b" * 64,

@@ -239,6 +239,7 @@ def main(argv: list[str]) -> None:
 
     if args.command == "cache-features":
         from aerial_search import run
+
         from frozen_head import feature_cache
 
         try:
@@ -264,10 +265,10 @@ def main(argv: list[str]) -> None:
 
     if args.command == "train-head":
         import torch
-
         from aerial_search import run
         from aerial_search.data import records
         from aerial_search.models.components import get_device
+
         from frozen_head import feature_cache, head_experiment
 
         names = ("steps", "batch_size", "learning_rate", "weight_decay", "eval_every")
@@ -327,6 +328,7 @@ def main(argv: list[str]) -> None:
         from aerial_search import run
         from aerial_search.cloud import cost, launcher
         from aerial_search.data import records
+
         from frozen_head import feature_cache, head_experiment
 
         logical = args.run_name or head_experiment.default_run_name(

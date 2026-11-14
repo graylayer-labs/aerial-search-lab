@@ -38,7 +38,6 @@ def test_the_trained_checkpoint_is_rewritten_after_the_first_prediction(
 
 def trained(directory: Path, weight: float) -> Any:
     import torch
-
     from finetuned_detector.experiment import Checkpoints
 
     saver = Checkpoints(directory, {"seed": 7}, 10)

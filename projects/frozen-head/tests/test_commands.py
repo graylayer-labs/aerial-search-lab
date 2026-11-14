@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from aerial_search import REPO_ROOT, cli
 from aerial_search.cloud import entry
 from frozen_head import cli as project

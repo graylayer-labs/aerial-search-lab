@@ -7,7 +7,6 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-
 from aerial_search.data import folds as folds_module
 from aerial_search.data.folds import (
     BLOCK_FRAMES,

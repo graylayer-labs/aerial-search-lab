@@ -6,7 +6,6 @@ import sys
 import types
 
 import pytest
-
 from aerial_search import cli
 
 

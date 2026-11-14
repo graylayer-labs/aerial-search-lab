@@ -4,7 +4,6 @@ import itertools
 
 import numpy as np
 import pytest
-
 from aerial_search.data import tiling
 
 

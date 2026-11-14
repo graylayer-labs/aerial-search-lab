@@ -24,9 +24,8 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
-
 from aerial_search.data.wisard import WISARD_COLLECTIONS, _frames_by_index
+from PIL import Image
 
 CACHE = Path("outputs/pairing-offsets")
 WIDTH = 160  # pixels; frames are shrunk to this width before phase correlation

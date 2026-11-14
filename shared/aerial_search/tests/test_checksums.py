@@ -4,7 +4,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from aerial_search.data import checksums
 from aerial_search.data.checksums import (
     DataMismatchError,

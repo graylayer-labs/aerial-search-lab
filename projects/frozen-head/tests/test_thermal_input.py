@@ -3,15 +3,14 @@
 import numpy as np
 import pytest
 import torch
+from frozen_head import thermal_input as ti
+from frozen_head.backbone import NaflexExtractor, pool2
 from PIL import Image
 from transformers.models.siglip2 import (
     Siglip2ImageProcessor,
     Siglip2VisionConfig,
     Siglip2VisionModel,
 )
-
-from frozen_head import thermal_input as ti
-from frozen_head.backbone import NaflexExtractor, pool2
 
 
 def ramp(low: int = 90, high: int = 130) -> Image.Image:
