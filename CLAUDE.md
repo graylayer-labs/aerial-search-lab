@@ -60,6 +60,8 @@ CI runs these four checks. More in `recipes.md`.
 - `main` is protected: a PR merges only when the `checks` CI job passes, every
   commit is signed (setup in `recipes.md`), and merging goes through GitHub,
   never locally (`gh pr merge <n> --auto --squash`).
+- Every PR closes an issue, except Dependabot PRs: the lead merges those when
+  `checks` passes.
 - Logic under any `src/`, experiments and metrics are checked by the
   `reviewer` agent before auto-merge; docs and config are read by the lead.
   The PR says which, and its Evidence section holds the pasted output of the
