@@ -59,8 +59,10 @@ CI runs these four checks. More in `recipes.md`.
 
 - `main` is protected: a PR merges only when the `checks` and `gate` CI jobs
   pass (`gate` is the org check: title, issue link, size under 400 lines,
-  protected paths), every commit is signed (setup in `recipes.md`), and merging goes through GitHub,
-  never locally (`gh pr merge <n> --auto --squash`).
+  protected paths), and merging goes through GitHub, never locally
+  (`gh pr merge <n> --auto --squash`). Commits are signed locally (setup in
+  `recipes.md`), but main no longer requires verified signatures: agent
+  commits cannot verify yet (owner, 2026-11-14, #215).
 - Every PR closes an issue, except Dependabot PRs: the lead merges those when
   `checks` and `gate` pass.
 - Logic under any `src/`, experiments and metrics are checked by the
