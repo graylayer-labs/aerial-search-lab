@@ -240,7 +240,7 @@ def main(argv: list[str]) -> None:
                 session_factory=shared._aws_session,
                 spot_price_usd=spot_price,
             )
-        except (run.ProvenanceError, cost.CostRefused, ValueError) as error:
+        except (run.ProvenanceError, cost.CostRefusedError, ValueError) as error:
             raise SystemExit(f"refusing to launch: {error}") from error
         print(
             json.dumps(

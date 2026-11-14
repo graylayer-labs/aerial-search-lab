@@ -151,7 +151,7 @@ def test_a_refused_launch_exits_with_the_reason(monkeypatch, chosen) -> None:
     from aerial_search.cloud import cost
 
     def refuse(**_: Any) -> Any:
-        raise cost.CostRefused("over the 5 EUR month limit")
+        raise cost.CostRefusedError("over the 5 EUR month limit")
 
     monkeypatch.setattr(launcher, "launch", refuse)
     with pytest.raises(SystemExit, match="refusing to launch: over the 5 EUR"):

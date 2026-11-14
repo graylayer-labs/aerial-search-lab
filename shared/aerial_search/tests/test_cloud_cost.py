@@ -11,18 +11,18 @@ from aerial_search.cloud import cost
 
 
 def estimate(**over: Any) -> cost.Estimate:
-    args: dict[str, Any] = dict(
-        expected_hours=3.0,
-        max_runtime_hours=12.0,
-        spot=True,
-        month_to_date_eur=0.0,
-        running_jobs_eur=0.0,
-    )
+    args: dict[str, Any] = {
+        "expected_hours": 3.0,
+        "max_runtime_hours": 12.0,
+        "spot": True,
+        "month_to_date_eur": 0.0,
+        "running_jobs_eur": 0.0,
+    }
     return cost.check(**{**args, **over})
 
 
 def test_a_launch_that_did_not_count_running_jobs_is_refused() -> None:
-    with pytest.raises(cost.CostRefused, match="running"):
+    with pytest.raises(cost.CostRefusedError, match="running"):
         estimate(running_jobs_eur=None)
 
 
@@ -42,19 +42,19 @@ def test_the_rate_converts_to_euros() -> None:
 def test_a_worst_case_over_the_run_limit_is_refused() -> None:
     # 15 EUR at rate 1.0 buys 18.248 on-demand hours
     estimate(eur_per_usd=1.0, max_runtime_hours=18.0)
-    with pytest.raises(cost.CostRefused, match="worst case"):
+    with pytest.raises(cost.CostRefusedError, match="worst case"):
         estimate(eur_per_usd=1.0, max_runtime_hours=18.3, expected_hours=1.0)
 
 
 def test_month_to_date_plus_worst_case_over_the_month_limit_is_refused() -> None:
     e = estimate(eur_per_usd=1.0, month_to_date_eur=50.0)
     assert e.month_total_eur == pytest.approx(59.864)
-    with pytest.raises(cost.CostRefused, match="month"):
+    with pytest.raises(cost.CostRefusedError, match="month"):
         estimate(eur_per_usd=1.0, month_to_date_eur=50.2)
 
 
 def test_an_unknown_month_to_date_is_refused() -> None:
-    with pytest.raises(cost.CostRefused, match="month-to-date"):
+    with pytest.raises(cost.CostRefusedError, match="month-to-date"):
         estimate(month_to_date_eur=None)
 
 
@@ -73,7 +73,7 @@ def test_running_jobs_worst_case_counts_in_the_month_check() -> None:
     )
     assert e.month_total_eur == pytest.approx(57.864)
     assert e.running_jobs_eur == pytest.approx(18.0)
-    with pytest.raises(cost.CostRefused, match="running"):
+    with pytest.raises(cost.CostRefusedError, match="running"):
         estimate(
             eur_per_usd=1.0,
             month_to_date_eur=30.0,
@@ -83,7 +83,7 @@ def test_running_jobs_worst_case_counts_in_the_month_check() -> None:
 
 @pytest.mark.parametrize("hours", [0.0, -1.0])
 def test_expected_hours_must_be_positive(hours: float) -> None:
-    with pytest.raises(cost.CostRefused, match="expected"):
+    with pytest.raises(cost.CostRefusedError, match="expected"):
         estimate(expected_hours=hours)
 
 
@@ -99,12 +99,12 @@ def test_a_running_jobs_worst_case_is_on_demand_times_its_max_runtime() -> None:
     assert cost.running_jobs_eur(
         [running(), running(seconds=3600)], eur_per_usd=1.0
     ) == pytest.approx(0.822 * 3)
-    with pytest.raises(cost.CostRefused, match="ml.p3.2xlarge"):
+    with pytest.raises(cost.CostRefusedError, match=r"ml.p3.2xlarge"):
         cost.running_jobs_eur([running("ml.p3.2xlarge")], eur_per_usd=1.0)
 
 
 def test_expected_hours_beyond_the_max_runtime_is_refused() -> None:
-    with pytest.raises(cost.CostRefused, match="expected"):
+    with pytest.raises(cost.CostRefusedError, match="expected"):
         estimate(expected_hours=13.0)
 
 
@@ -113,7 +113,7 @@ def test_cost_explorer_failure_is_not_a_zero() -> None:
         def get_cost_and_usage(self, **_: Any) -> Any:
             raise RuntimeError("AccessDenied")
 
-    with pytest.raises(cost.CostRefused, match="--month-to-date-eur"):
+    with pytest.raises(cost.CostRefusedError, match="--month-to-date-eur"):
         cost.month_to_date_eur(Broken(), eur_per_usd=1.0, today=cost.date(2026, 10, 14))
 
 
@@ -180,7 +180,7 @@ def test_a_just_ended_job_without_billable_time_counts_at_its_max_runtime() -> N
 
 def test_the_month_check_counts_this_runs_worst_case_not_its_estimate() -> None:
     # estimate 3 h spot = 1.2 EUR; worst case 12 h on demand = 9.864 EUR
-    with pytest.raises(cost.CostRefused, match="worst case"):
+    with pytest.raises(cost.CostRefusedError, match="worst case"):
         estimate(eur_per_usd=1.0, month_to_date_eur=51.0)
     e = estimate(eur_per_usd=1.0, month_to_date_eur=40.0)
     assert e.month_total_eur == pytest.approx(40.0 + 0.822 * 12)
@@ -205,38 +205,38 @@ def test_the_cpu_instance_is_priced_and_capped() -> None:
 
 @pytest.mark.parametrize("instance", ["ml.m5.large", "ml.p3.2xlarge", ""])
 def test_an_instance_not_on_the_list_is_refused(instance: str) -> None:
-    with pytest.raises(cost.CostRefused, match="not on the list"):
+    with pytest.raises(cost.CostRefusedError, match="not on the list"):
         cost.limits(instance, spot=True, max_runtime_hours=1.0)
 
 
 def test_a_cpu_job_over_two_hours_is_refused() -> None:
-    with pytest.raises(cost.CostRefused, match="2.0 h"):
+    with pytest.raises(cost.CostRefusedError, match=r"2.0 h"):
         cost.limits("ml.m5.xlarge", spot=True, max_runtime_hours=2.01)
 
 
 def test_a_cpu_job_must_be_spot() -> None:
-    with pytest.raises(cost.CostRefused, match="spot"):
+    with pytest.raises(cost.CostRefusedError, match="spot"):
         cost.limits("ml.m5.xlarge", spot=False, max_runtime_hours=1.0)
 
 
 def cpu_estimate(**over: Any) -> cost.Estimate:
     cpu = cost.limits("ml.m5.xlarge", spot=True, max_runtime_hours=2.0)
-    args: dict[str, Any] = dict(
-        expected_hours=0.5,
-        max_runtime_hours=2.0,
-        eur_per_usd=1.0,
-        spot_price_usd=cpu.spot_usd,
-        on_demand_price_usd=cpu.on_demand_usd,
-        run_limit_eur=cpu.run_limit_eur,
-        month_limit_eur=cpu.month_limit_eur,
-    )
+    args: dict[str, Any] = {
+        "expected_hours": 0.5,
+        "max_runtime_hours": 2.0,
+        "eur_per_usd": 1.0,
+        "spot_price_usd": cpu.spot_usd,
+        "on_demand_price_usd": cpu.on_demand_usd,
+        "run_limit_eur": cpu.run_limit_eur,
+        "month_limit_eur": cpu.month_limit_eur,
+    }
     return estimate(**{**args, **over})
 
 
 def test_the_cpu_month_cap_counts_spend_running_jobs_and_this_run() -> None:
     e = cpu_estimate(month_to_date_eur=4.0)
     assert e.month_total_eur == pytest.approx(4.0 + 0.257 * 2)
-    with pytest.raises(cost.CostRefused, match="5 EUR month limit"):
+    with pytest.raises(cost.CostRefusedError, match="5 EUR month limit"):
         cpu_estimate(month_to_date_eur=4.0, running_jobs_eur=0.5)
 
 
@@ -300,7 +300,7 @@ def test_spend_under_usage_types_naming_no_instance_is_refused_not_zero() -> Non
             groups = [group("EUW1-TrainingSpot-m5xl", "2.0"), group("Other", "0")]
             return {"ResultsByTime": [{"Groups": groups}]}
 
-    with pytest.raises(cost.CostRefused, match="usage-type format") as refused:
+    with pytest.raises(cost.CostRefusedError, match="usage-type format") as refused:
         cost.month_to_date_eur(
             Ce(), eur_per_usd=1.0, today=cost.date(2026, 10, 14), usage_family="ml.m5."
         )

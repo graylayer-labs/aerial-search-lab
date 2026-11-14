@@ -367,7 +367,7 @@ def main(argv: list[str]) -> None:
             feature_cache.CacheError,
             records.LeakError,
             run.ProvenanceError,
-            cost.CostRefused,
+            cost.CostRefusedError,
             ValueError,
         ) as error:
             raise SystemExit(f"refusing to launch: {error}") from error

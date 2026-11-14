@@ -1,6 +1,7 @@
 """The in-job entry point (#113)."""
 
 import hashlib
+import itertools
 import json
 from pathlib import Path
 from typing import Any
@@ -18,20 +19,22 @@ WORKSPACE = (
 
 # --- the request ------------------------------------------------------------------
 
-BASE: dict[str, Any] = dict(
-    logical_run="detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7",
-    attempt=1,
-    commit="a" * 40,
-    source_sha256="b" * 64,
-    manifests_sha256="c" * 64,
-    constraints_sha256="d" * 64,
-    baseline_args=["rgb", "--percent", "10", "--fold", "220109_Baker"],
-    role_arn="arn:aws:iam::123456789012:role/r",
-    spot=True,
-    max_runtime_hours=12.0,
-    max_wait_hours=18.0,
-    scratch=False,
-)
+BASE: dict[str, Any] = {
+    "logical_run": (
+        "detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7"
+    ),
+    "attempt": 1,
+    "commit": "a" * 40,
+    "source_sha256": "b" * 64,
+    "manifests_sha256": "c" * 64,
+    "constraints_sha256": "d" * 64,
+    "baseline_args": ["rgb", "--percent", "10", "--fold", "220109_Baker"],
+    "role_arn": "arn:aws:iam::123456789012:role/r",
+    "spot": True,
+    "max_runtime_hours": 12.0,
+    "max_wait_hours": 18.0,
+    "scratch": False,
+}
 
 
 def request(**over: Any) -> dict[str, Any]:
@@ -105,7 +108,7 @@ def test_the_job_passes_the_baseline_flags_plus_its_own_paths(job) -> None:
     argv = prepare(job, job_env(job["code"], job["manifests"]))
     assert argv[0] == "train-baseline"
     assert argv[1:6] == BASE["baseline_args"][:5]
-    flags = dict(zip(argv[1:], argv[2:], strict=False))
+    flags = dict(itertools.pairwise(argv))
     assert flags["--checkpoint-dir"] == str(job["checkpoints"])
     assert flags["--data-root"] == str(job["data"])
     assert flags["--manifests"] == str(job["manifests"])
@@ -115,44 +118,44 @@ def test_the_job_passes_the_baseline_flags_plus_its_own_paths(job) -> None:
 def test_modified_code_in_the_job_is_refused(job) -> None:
     env = job_env(job["code"], job["manifests"])
     (job["code"] / PACKAGE_DIR / "a.py").write_text("x = 2\n")
-    with pytest.raises(entry.JobRefused, match="source"):
+    with pytest.raises(entry.JobRefusedError, match="source"):
         prepare(job, env)
 
 
 def test_modified_manifests_in_the_job_are_refused(job) -> None:
     env = job_env(job["code"], job["manifests"])
     (job["manifests"] / "other.jsonl").write_text("{}\n{}\n")
-    with pytest.raises(entry.JobRefused, match="manifests"):
+    with pytest.raises(entry.JobRefusedError, match="manifests"):
         prepare(job, env)
 
 
 def test_modified_constraints_in_the_job_are_refused(job) -> None:
     env = job_env(job["code"], job["manifests"])
     job["constraints"].write_bytes(PINS + b"numpy==2.0.0\n")
-    with pytest.raises(entry.JobRefused, match="constraints"):
+    with pytest.raises(entry.JobRefusedError, match="constraints"):
         prepare(job, env)
 
 
 def test_an_incomplete_environment_is_refused(job) -> None:
     env = job_env(job["code"], job["manifests"])
     del env["AERIAL_SEARCH_ATTESTATION"]
-    with pytest.raises(entry.JobRefused, match="incomplete"):
+    with pytest.raises(entry.JobRefusedError, match="incomplete"):
         prepare(job, env)
     env = job_env(job["code"], job["manifests"], AERIAL_SEARCH_BASELINE_ARGS="{")
-    with pytest.raises(entry.JobRefused, match="incomplete"):
+    with pytest.raises(entry.JobRefusedError, match="incomplete"):
         prepare(job, env)
 
 
 def test_outside_a_training_job_is_refused(job) -> None:
     env = job_env(job["code"], job["manifests"], TRAINING_JOB_NAME="")
-    with pytest.raises(entry.JobRefused, match="TRAINING_JOB_NAME"):
+    with pytest.raises(entry.JobRefusedError, match="TRAINING_JOB_NAME"):
         prepare(job, env)
 
 
 def test_unreadable_constraints_are_refused(job) -> None:
     env = job_env(job["code"], job["manifests"])
     job["constraints"].unlink()
-    with pytest.raises(entry.JobRefused, match="cannot read the constraints"):
+    with pytest.raises(entry.JobRefusedError, match="cannot read the constraints"):
         prepare(job, env)
 
 
@@ -229,7 +232,7 @@ def test_a_refused_job_exits_before_installing_anything(in_job, monkeypatch) -> 
         raise AssertionError("installed")
 
     monkeypatch.setattr(entry, "_install", boom)
-    with pytest.raises(SystemExit, match="refusing to run: .*source"):
+    with pytest.raises(SystemExit, match=r"refusing to run: .*source"):
         entry.main(in_job["env"])
 
 
@@ -302,11 +305,13 @@ def test_torch_and_torchvision_from_the_container_are_never_reinstalled(
         seen.append(args)
         used = Path(args[args.index("-c") + 1]).read_text()
         assert "pycocotools==2.0.11" in used
-        assert "torch==" not in used and "torchvision==" not in used
+        assert "torch==" not in used
+        assert "torchvision==" not in used
 
     monkeypatch.setattr(entry.subprocess, "run", run)
     entry._install(dependencies, pins)
-    assert seen and seen[0][-2:] == dependencies
+    assert seen
+    assert seen[0][-2:] == dependencies
     assert not any(a.startswith(("torch>", "torch=", "torchvision")) for a in seen[0])
 
 
@@ -335,7 +340,8 @@ def test_a_restart_before_attempts_json_synced_still_gets_a_new_name(job) -> Non
         "exp", job["checkpoints"], now=datetime(2026, 10, 15, 9, 40, 0, tzinfo=UTC)
     )
     assert first != second
-    assert first.startswith("exp-a1-") and second.startswith("exp-a1-")
+    assert first.startswith("exp-a1-")
+    assert second.startswith("exp-a1-")
 
 
 def test_a_name_in_attempts_json_is_never_reused_even_if_counts_disagree(job) -> None:
@@ -353,7 +359,7 @@ def test_a_job_for_a_command_it_has_no_inputs_for_is_refused(job, command) -> No
     # train-head needs the features channel (#191); any other command has no
     # inputs at all. Neither may run train-baseline in its place.
     env = job_env(job["code"], job["manifests"], AERIAL_SEARCH_COMMAND=command)
-    with pytest.raises(entry.JobRefused, match=command):
+    with pytest.raises(entry.JobRefusedError, match=command):
         prepare(job, env)
 
 
@@ -402,7 +408,7 @@ def test_a_head_job_runs_train_head_on_the_cache_under_its_own_names(
     argv = prepare_head(head_job, head_job["env"])
     assert argv[0] == "train-head"
     assert argv[1:6] == BASE["baseline_args"][:5]
-    flags = dict(zip(argv[1:], argv[2:], strict=False))
+    flags = dict(itertools.pairwise(argv))
     assert "--checkpoint-dir" not in flags
     assert flags["--data-root"] == str(head_job["data"])
     assert flags["--manifests"] == str(head_job["manifests"])
@@ -415,7 +421,7 @@ def test_a_head_job_runs_train_head_on_the_cache_under_its_own_names(
 
 def test_modified_features_in_the_job_are_refused(head_job) -> None:
     (head_job["features"] / "features" / "v" / "a.npy").write_bytes(b"\0")
-    with pytest.raises(entry.JobRefused, match="features"):
+    with pytest.raises(entry.JobRefusedError, match="features"):
         prepare_head(head_job, head_job["env"])
 
 
@@ -426,7 +432,7 @@ def test_a_cache_name_that_is_not_two_plain_names_is_refused(head_job, cache) ->
         **head_job["env"],
         launcher.FEATURES_ENV: json.dumps({**sent, "cache": cache}),
     }
-    with pytest.raises(entry.JobRefused, match="cache"):
+    with pytest.raises(entry.JobRefusedError, match="cache"):
         prepare_head(head_job, env)
 
 
