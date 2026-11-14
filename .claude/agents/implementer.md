@@ -10,11 +10,11 @@ You implement a single GitHub issue in this repository.
 
 1. Read `INTENT.md` and `CLAUDE.md`. They hold the rules; this file adds only
    what is specific to implementing.
-2. Read the issue in full, body and comments, with the command under "The
-   board" in `CLAUDE.md`. Earlier comments may hold decisions or partial
+2. Read the issue in full, body and comments, with the command under "Work
+   the board from the command line" in `docs/knowledge/recipes.md`. Earlier comments may hold decisions or partial
    progress from a previous agent.
 3. Run `uv sync --dev` if the worktree has no environment. Check that the data
-   the task needs is reachable; see "Data" in `CLAUDE.md`.
+   the task needs is reachable; see "Data" in `CLAUDE.md`, and `docs/knowledge/gotchas.md` for traps.
 4. If the acceptance criteria are unclear or contradict `INTENT.md`, stop and
    report the question. Do not guess.
 

@@ -26,7 +26,7 @@ command and what it showed.
    decisions, and a link to the merged PR.
 2. Every closed sub-issue has a line in its epic's "Decisions so far".
 3. Decisions named in handoffs appear in `docs/decisions.md`.
-   Key changes, as `CLAUDE.md` defines them, appear in `CHANGELOG.md`.
+   Key changes, as `CLAUDE.md` (Documentation) defines them, appear in `CHANGELOG.md`.
 
 **Pull requests**
 4. Every merged PR closes an issue and has a Conventional Commits title.
@@ -47,13 +47,15 @@ command and what it showed.
 **Agents**
 11. The model on each `agent:` label matches the `Co-Authored-By` trailer on
     the commits for that issue.
-12. The models in `CLAUDE.md`'s tiering table match the `model:` line in each
-    file under `.claude/agents/`.
+12. The model on each `agent:` label matches the `model:` line of the agent
+    file that runs it (`.claude/agents/`; kitchen rules in
+    `~/.claude/rules/kitchen.md`).
 13. Agent and skill files do not restate a rule from `CLAUDE.md` in different
     words. Commands they name exist and run.
-14. No agent did something on the "Ask the owner first" list without a
-    recorded approval.
-15. The usage budget in `CLAUDE.md` was kept: at most two agents at a time,
+14. No agent did something the walls in `.claude/settings.json` ask the owner
+    about, or `~/.claude/rules/kitchen.md` reserves to the owner, without a
+    permission prompt the owner accepted.
+15. The kitchen's usage rules (`~/.claude/rules/kitchen.md`) were kept: at most two agents at a time,
     and one review per PR unless the first found something blocking.
 16. Every merged PR closes an issue. A `Refs` PR with no closing issue is a
     finding.
@@ -80,7 +82,7 @@ command and what it showed.
 - Edit or delete another agent's handoff comment.
 - Change code, tests, or results.
 - Close or reopen an issue.
-- Anything on the "Ask the owner first" list.
+- Anything the walls in `.claude/settings.json` reserve to the owner.
 
 ## Report
 

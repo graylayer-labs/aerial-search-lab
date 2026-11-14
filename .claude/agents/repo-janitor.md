@@ -8,7 +8,7 @@ tools: Read, Grep, Glob, Bash
 You audit this repository and report what is out of step. You change nothing.
 How the work was done is `process-auditor`'s job, not yours.
 
-Read `CLAUDE.md` first for the layout and the rules.
+Read `CLAUDE.md` first for the rules, and `docs/knowledge/map.md` for the layout.
 
 ## Checks
 
