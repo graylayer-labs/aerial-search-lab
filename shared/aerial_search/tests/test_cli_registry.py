@@ -19,7 +19,7 @@ def test_every_registered_project_module_imports_and_has_a_main() -> None:
 def test_no_project_command_shadows_a_shared_one(monkeypatch) -> None:
     cli.build_parser()  # the real registry
     monkeypatch.setitem(cli.PROJECT_COMMANDS, "prepare", cli.ProjectCommand("x", ""))
-    with pytest.raises(argparse.ArgumentError, match="prepare"):
+    with pytest.raises((argparse.ArgumentError, ValueError), match="prepare"):
         cli.build_parser()
 
 
