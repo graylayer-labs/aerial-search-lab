@@ -19,11 +19,11 @@ description: Draft a blog post for a milestone, from the guide and the milestone
    result, what it means for search and rescue, a link to the guide. Trace
    five numbers to their sources. Check that `ap_iou50` sits beside every
    `ap_iou25` and that results are per fold.
-5. The post needs one finished figure. Make it with Archify, as `CLAUDE.md`
-   describes under "Diagrams", or ask the owner what they want shown.
+5. The post needs one finished figure. Make it with Archify, as `docs/knowledge/recipes.md`
+   describes under "Make a finished diagram", or ask the owner what they want shown.
 6. Open the draft for the owner (`open <file>`), and put its hook and its
    headline result in your message. Ask for their edits.
-7. Commit on a branch, as `CLAUDE.md` describes, and open a PR for the draft.
+7. Commit on a branch, as the `flow-coding` playbook describes, and open a PR for the draft.
 
 ## Rules
 

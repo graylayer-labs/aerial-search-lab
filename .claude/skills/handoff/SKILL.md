@@ -16,13 +16,11 @@ conversation.
 2. Run `uv run pytest` and `uv run ruff check .` and note the result.
 3. Draft a comment for the issue using the template below.
 4. Post it with `gh issue comment <number>`, before the issue closes. If a
-   merge closed the issue first, post it straight after. An owner approval
-   is quoted on the issue in its own comment before the approved action.
+   merge closed the issue first, post it straight after.
 5. Update the issue's status on the board if it changed.
 6. If the session surfaced follow-up work, create issues for it from the task
    template and add them to the board.
-7. Tell the owner with an update in the form under "Keeping the owner
-   informed" in `CLAUDE.md`: what finished and the one
+7. Tell the owner with an update in the form of the `owner-update` skill: what finished and the one
    thing that needs them, if any. Open anything they need to look at.
 
 ## Comment template

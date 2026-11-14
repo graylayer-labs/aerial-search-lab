@@ -21,8 +21,8 @@ version that failed its review is the most useful thing a reader can get.
    An issue is new if no chapter names it in its "Last updated ... from issues"
    line and the guide README does not list it as not yet covered. Skip the
    standing issues #9 and #24 and any epic.
-2. **Read each new issue in full,** with the command under "The board" in
-   `CLAUDE.md`. The closing "Handoff" comment is the main source. Then read
+2. **Read each new issue in full,** with the command under "Work the board from the
+   command line" in `docs/knowledge/recipes.md`. The closing "Handoff" comment is the main source. Then read
    the notes it links under `docs/`, and `CHANGELOG.md` and `docs/decisions.md`
    for that date. Read the primary source, never a summary of it.
 3. **Pick the chapter.** Put the issue in the chapter whose step it belongs to.
