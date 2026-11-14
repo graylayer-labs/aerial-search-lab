@@ -78,24 +78,6 @@ CI runs these four checks. More in `recipes.md`.
   never `--open`); `aws *`, `gh repo edit|delete`, `gh release` ask the owner.
   Publishing a blog post, release or repo setting is the owner's.
 
-## Diagrams
-
-- **Mermaid** for drafts and working documents. It costs few tokens and GitHub
-  renders it.
-- **Archify** for finished figures: the README, milestone write-ups, and blog
-  posts. Figures and their source JSON live in `docs/figures/`, for example
-  `pipeline.svg` and `pipeline.archify.json`.
-- Install once with `tools/install_archify.sh`. It fetches a pinned, verified
-  commit into `.claude/skills/archify/`, which is git-ignored, and refuses to
-  install if the commit differs. `--force` replaces an existing install.
-- Limits, enforced in `.claude/settings.json`:
-  - No brand URLs in a diagram. Brand capture fetches from the network.
-  - Never pass `--open`.
-  - Never run `preview`.
-- Archify has no command-line SVG export. Export from the viewer's Export menu,
-  and commit only the SVG and its JSON, never anything from `.archify/`. Check
-  the SVG for absolute paths first.
-
 ## Data
 
 `data/` is git-ignored, so a fresh clone or worktree has none.
@@ -104,118 +86,40 @@ CI runs these four checks. More in `recipes.md`.
 |---|---|
 | Raw WiSARD images and labels, 41 GB | `data/raw/wisard-full/` in the main checkout |
 | Manifests, regenerable | `data/manifests/wisard-full/` in the main checkout |
-| The same dataset, as the durable copy | S3 bucket `ssl-aerial-person-detection-data-eu-west1`, region `eu-west-1`, under `wisard/raw/wisard-full/`. Versioning is on. Checked equal to the local copy by path and size on 2026-09-29 |
+| Durable copy | S3 bucket `ssl-aerial-person-detection-data-eu-west1`, `eu-west-1`, under `wisard/raw/wisard-full/`; versioning on; checked equal to local by path and size on 2026-09-29 |
 
-- The main checkout is the first path printed by `git worktree list`.
-- Agent worktrees get `data/` as a symlink to the main checkout's copy, set in
-  `.claude/settings.json`. If `data/` is missing, read it from the main
-  checkout by absolute path.
-- If a task needs data you cannot reach, stop and say so. Do not invent
-  figures or regenerate from nothing.
-- The dataset exists once on the laptop and once in S3. If a directory is ever
-  missing locally, fetch it from S3; do not look for another copy.
+- The main checkout is the first path of `git worktree list`. Agent worktrees
+  get `data/` as a symlink to it; if missing, read it by absolute path.
+- Data you cannot reach: stop and say so. Never invent figures or regenerate
+  from nothing. A missing local directory comes from S3 (`fetch-directory`),
+  not another copy.
+- Pinned by `shared/aerial_search/src/aerial_search/data/checksums/wisard-full.tsv.gz`
+  (100,794 files, path, size, SHA-256); root hash
+  `6e5e5d554c4be119f15bb636049800788904f3a2e2759cabce402c676d1575ed`.
+- A normal `prepare` or run (`train-ssl`, `train-detector`, `train-head`)
+  verifies its directories against the list and refuses missing, scratch or
+  unverified manifests; `run.json` records the data it was verified against.
+  `--scratch` skips the check and records `verified: false`. Commands and
+  details: `recipes.md`. Pairing evidence: `docs/wisard-pairing-review.md`.
 
-### Pinning the data
+## AWS and compute
 
-The dataset is pinned by
-`shared/aerial_search/src/aerial_search/data/checksums/wisard-full.tsv.gz`: one line per file (path, size, SHA-256), 100,794 files, 3.9 MB. Its root hash
-(SHA-256 of the list's text) is
-`6e5e5d554c4be119f15bb636049800788904f3a2e2759cabce402c676d1575ed`.
-Hashing all 43 GB takes about 25 seconds.
-
-- A normal `prepare` hashes the directories of its selected collections and
-  checks them against the list before writing anything; on a difference it
-  refuses and names the files. `data_quality.json` records
-  `data: {dataset, root_hash, verified, directories, seconds}` and
-  `provenance: {commit, scratch}`. A source that is not the pinned dataset
-  records `verified: false` and no root hash. `prepare --scratch` skips the
-  check and records `verified: false`; it will not overwrite manifests that
-  are not scratch unless `--force`.
-- A normal run (`train-ssl`, `train-detector`, `train-head`) refuses manifests whose
-  `data_quality.json` is missing, scratch, or unverified, re-verifies the
-  directories those manifests reference against the list before starting,
-  and copies `data` and `provenance` into `run.json` with `data_verified_at`.
-  A scratch run skips the check and records `data_verification_skipped`.
-  So a quotable result's `run.json` names the data it was verified against.
-
-```bash
-uv run aerial-search check-data data/raw/wisard-full   # exit 1 and list every changed/missing/added file
-uv run aerial-search check-data data/raw/wisard-full --directory 220109_Baker_Enterprise_IR_2
-uv run aerial-search fetch-directory <name> --data-root data/raw/wisard-full   # from S3 if absent, then verified
-uv run aerial-search checksum data/raw/wisard-full --force   # re-pin; only if the dataset deliberately changes
-```
-
-- `fetch-directory` copies into a temporary `.fetch-<name>-*` directory and
-  moves it into place only if it matches the list; a mismatch deletes the
-  copy. A directory already present that differs is refused and kept. The
-  AWS profile is `AWS_PROFILE` from the environment, else from
-  `.claude/settings.json`, else none (default credentials); the log line
-  says which. A failed `aws` call prints its error text. The function is
-  `aerial_search.data.checksums.ensure_directory`.
-- `prepare` records the commit and refuses a dirty tree or a commit off
-  `origin/main`; pass `--scratch` for a debugging run.
-
-### AWS
-
-- Agents use the AWS profile `ssl-aerial`, set as `AWS_PROFILE` in
-  `.claude/settings.json`. It assumes the role
-  `ssl-aerial-person-detection-agent`, which can list, read, and write objects
-  in the project bucket and nothing else. It cannot delete objects or
-  versions, or change bucket settings.
-- The AWS names (bucket, roles, the `project` tag) keep the repo's old name,
-  `ssl-aerial-person-detection`, on purpose: renaming them would mean new
-  resources and a data copy for no gain (#160).
-- Do not name another profile. The owner's own sign-in has administrator
-  access and is not for agents.
-- A fresh machine needs the profile added to `~/.aws/config`: `role_arn` of
-  the role above, `source_profile` of the owner's sign-in, region `eu-west-1`.
-- The sign-in behind the profile is temporary. If AWS commands fail with an
-  expired token, ask the owner to sign in again.
-- Anything that costs money needs the owner's approval. See "Ask the owner
-  first".
-
-### Pairing
-
-Which RGB frame goes with which thermal frame is decided in
-`shared/aerial_search/src/aerial_search/data/wisard.py`, and the evidence is in
-`docs/wisard-pairing-review.md`. Only directory pairs listed in
-`WISARD_COLLECTIONS` are paired. Pairs are 0 to 2 frames apart in time; the
-cameras drift. Regenerate the manifests and the contact sheets with:
-
-```bash
-uv run aerial-search prepare data/raw/wisard-full --output data/manifests/wisard-full
-uv run aerial-search folds data/raw/wisard-full data/manifests/wisard-full
-uv run aerial-search check-folds data/raw/wisard-full data/manifests/wisard-full
-uv run python tools/pairing_contact_sheets.py data/raw/wisard-full \
-  data/manifests/wisard-full/all_pairs.jsonl outputs/pairing-check
-```
-
-## Layout
-
-```
-pyproject.toml       uv workspace root; not a package itself
-shared/aerial_search/  the shared evaluation, package aerial_search: data/
-                     (pairing, folds, records), evaluation/ (metrics, tables),
-                     run.py, cloud/, the aerial-search CLI; and its tests/
-projects/<name>/     one package per approach, with its README and tests/
-projects/_template/  the starting point for a new approach
-docs/                milestone write-ups and decision notes
-tools/               one-off scripts that are worth keeping
-data/                datasets and manifests (git-ignored)
-outputs/             run artefacts (git-ignored)
-```
-
-## Projects
-
-- Each approach to the problem is one project under `projects/`. A new one
-  starts from `projects/_template` (steps in `projects/README.md`).
-- It writes its expected results in its README before its first run.
-- It shares the evaluation: data, folds, frame selection
-  (`aerial_search.data.records`), metrics and `start_run` come from
-  `aerial_search`, and the project changes none of them. Its commands are
-  registered in `PROJECT_COMMANDS` in the shared CLI, so they run as
-  `aerial-search <command>`, in a cloud job too.
-- `shared/` never imports a project; a test enforces it.
+- Profile `ssl-aerial` (`AWS_PROFILE` in `.claude/settings.json`) assumes role
+  `ssl-aerial-person-detection-agent`: list, read and write objects in the
+  project bucket, nothing else; no deletes, no bucket changes. Never name
+  another profile (the owner's sign-in is administrator). A fresh machine
+  needs the profile in `~/.aws/config`: `role_arn` of that role,
+  `source_profile` of the owner's sign-in, region `eu-west-1`. Expired token:
+  ask the owner to sign in again. The AWS names keep the repo's old name on
+  purpose (#160).
+- Cloud GPU: `aerial-search sagemaker-train`, `ml.g4dn.xlarge`, managed spot
+  with checkpoints, EUR 15 per run and EUR 60 per calendar month (owner,
+  2026-10-14 #109, confirmed #125). Spot only: AWS declined on-demand
+  (#115). Ask `aws-manager` for month-to-date spend first.
+- Cloud CPU: `sagemaker-train-head`, `ml.m5.xlarge` spot, 2 h per job, EUR 5
+  per month (owner, 2026-10-23, #184). Details and guard: `recipes.md`.
+- Laptop (M4, 24 GB): size runs under 30 minutes; a run over one hour goes to
+  the cloud within the limits above.
 
 ## Documentation
 
