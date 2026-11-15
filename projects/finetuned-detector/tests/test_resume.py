@@ -16,6 +16,7 @@ import pytest
 import torch
 from aerial_search import cli
 from aerial_search.evaluation import predictions as pr
+from finetuned_detector import checkpoints as ck
 from finetuned_detector import experiment as be
 from numpy.random import mtrand
 from PIL import Image
@@ -133,7 +134,7 @@ def run_dir(tmp_path: Path, name: str) -> Path:
 
 
 def final_weights(directory: Path) -> dict[str, torch.Tensor]:
-    state = torch.load(directory / be.CHECKPOINT_FILENAME, weights_only=True)
+    state = torch.load(directory / ck.CHECKPOINT_FILENAME, weights_only=True)
     return state["model"]
 
 
@@ -315,29 +316,29 @@ def test_resuming_under_another_config_or_seed_is_refused(
     with pytest.raises(CrashError):
         run(tmp_path, manifests, raw, "first", "native", checkpoint_dir=shared)
     monkeypatch.setattr(be, "build_model", model_factory())
-    with pytest.raises(be.CheckpointError, match="does not match"):
+    with pytest.raises(ck.CheckpointError, match="does not match"):
         run(tmp_path, manifests, raw, "second", checkpoint_dir=shared, **change)
     assert not run_dir(tmp_path, "second").exists()
 
 
 def test_a_normal_run_does_not_resume_from_a_scratch_checkpoint(tmp_path):
-    state = {"identity": be.checkpoint_identity({"a": 1}, 7, "abc", scratch=True)}
+    state = {"identity": ck.checkpoint_identity({"a": 1}, 7, "abc", scratch=True)}
     shared = tmp_path / "checkpoints"
     shared.mkdir()
-    torch.save(state, shared / be.CHECKPOINT_FILENAME)
-    identity = be.checkpoint_identity({"a": 1}, 7, "abc", scratch=False)
-    with pytest.raises(be.CheckpointError, match="does not match"):
-        be.Checkpoints(shared, identity, every=2).load()
+    torch.save(state, shared / ck.CHECKPOINT_FILENAME)
+    identity = ck.checkpoint_identity({"a": 1}, 7, "abc", scratch=False)
+    with pytest.raises(ck.CheckpointError, match="does not match"):
+        ck.Checkpoints(shared, identity, every=2).load()
 
 
 def test_two_live_runs_cannot_share_a_checkpoint_directory(tmp_path):
     # A second process on the same directory would write each test frame
     # twice and interleave checkpoints; the lock dies with its process.
-    identity = be.checkpoint_identity({"a": 1}, 7, "abc", scratch=True)
-    first = be.Checkpoints(tmp_path / "checkpoints", identity, every=2)
+    identity = ck.checkpoint_identity({"a": 1}, 7, "abc", scratch=True)
+    first = ck.Checkpoints(tmp_path / "checkpoints", identity, every=2)
     first.lock()
-    second = be.Checkpoints(tmp_path / "checkpoints", identity, every=2)
-    with pytest.raises(be.CheckpointError, match="in use"):
+    second = ck.Checkpoints(tmp_path / "checkpoints", identity, every=2)
+    with pytest.raises(ck.CheckpointError, match="in use"):
         second.lock()
     first.unlock()
     second.lock()
@@ -378,7 +379,7 @@ def test_resuming_after_the_test_manifest_changed_is_refused(tmp_path, monkeypat
     test = manifests / "folds" / FOLD / "thermal" / "test.jsonl"
     test.write_text(test.read_text().replace('"x_center": 0.4', '"x_center": 0.45'))
     monkeypatch.setattr(be, "build_model", model_factory())
-    with pytest.raises(be.CheckpointError, match="inputs differ"):
+    with pytest.raises(ck.CheckpointError, match="inputs differ"):
         run(tmp_path, manifests, raw, "second", "native", checkpoint_dir=shared)
     assert not run_dir(tmp_path, "second").exists()
 
@@ -390,11 +391,11 @@ def test_a_default_checkpoint_is_deleted_on_completion_an_explicit_one_kept(
     monkeypatch.setattr(be, "build_model", model_factory())
     run(tmp_path, manifests, raw, "default", "native")
     directory = run_dir(tmp_path, "default")
-    assert not (directory / "checkpoints" / be.CHECKPOINT_FILENAME).exists()
+    assert not (directory / "checkpoints" / ck.CHECKPOINT_FILENAME).exists()
     assert (directory / pr.PREDICTIONS_FILENAME).exists()
     explicit = tmp_path / "explicit"
     run(tmp_path, manifests, raw, "explicit", "native", checkpoint_dir=explicit)
-    assert (explicit / be.CHECKPOINT_FILENAME).exists()
+    assert (explicit / ck.CHECKPOINT_FILENAME).exists()
 
 
 def _global_draw(count: int) -> list[float]:
@@ -413,14 +414,14 @@ def test_an_old_checkpoint_rng_state_restores_the_global_numpy_stream() -> None:
         "numpy": numpy_state,
         "torch": torch.get_rng_state(),
     }
-    be._set_rng_state(state)
+    ck._set_rng_state(state)
     assert _global_draw(4) == expected
 
 
 def test_the_rng_state_round_trips_the_next_global_numpy_draw() -> None:
-    saved = be._rng_state()
+    saved = ck._rng_state()
     first = _global_draw(3)
-    be._set_rng_state(saved)
+    ck._set_rng_state(saved)
     assert _global_draw(3) == first
     assert isinstance(saved["numpy"]["state"]["key"], list)
 
@@ -468,13 +469,13 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
     if mode == "tiled":
         monkeypatch.setattr(be, "tile_spec", lambda camera, recipe: SPEC)
     saves = []
-    real_save = be.Checkpoints.save
+    real_save = ck.Checkpoints.save
 
     def save(self, **state):
         saves.append({k: compact(v) for k, v in state.items()})
         real_save(self, **state)
 
-    monkeypatch.setattr(be.Checkpoints, "save", save)
+    monkeypatch.setattr(ck.Checkpoints, "save", save)
     checkpoints = tmp_path / "ckpt"
 
     summary = be.run_baseline(
@@ -495,7 +496,7 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
     )
 
     directory = Path(summary["run"])
-    stored = torch.load(checkpoints / be.CHECKPOINT_FILENAME, weights_only=True)
+    stored = torch.load(checkpoints / ck.CHECKPOINT_FILENAME, weights_only=True)
     golden.check(
         f"baseline-run-{mode}",
         {
@@ -518,7 +519,7 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
             "checkpoint.pt": {
                 k: sorted(v) if k == "rng" else compact(v) for k, v in stored.items()
             },
-            "attempts": json.loads((checkpoints / be.ATTEMPTS_FILENAME).read_text()),
+            "attempts": json.loads((checkpoints / ck.ATTEMPTS_FILENAME).read_text()),
             "summary": {k: v for k, v in summary.items() if k != "run"},
         },
     )
