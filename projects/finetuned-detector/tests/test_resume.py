@@ -458,9 +458,25 @@ def compact(value):
     }
 
 
-@pytest.mark.parametrize("mode", ["native", "tiled"])
+def rng_layout(rng: dict, golden) -> dict:
+    """Keys of the saved RNG state; the seeded torch state in full."""
+    return {"keys": sorted(rng), "torch": golden.weights(rng["torch"])}
+
+
+CASES = [
+    ("native", "native", 3, 6),
+    ("tiled", "tiled", 3, 6),
+    # validation 0.042, 0.048, 0.053, 0.053: the best step (6) is not the last,
+    # so the best weights are restored, and the later tie must not win
+    ("native-best-not-last", "native", 2, 8),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "mode", "seed", "steps"), CASES, ids=[c[0] for c in CASES]
+)
 def test_a_baseline_run_writes_exactly_the_pinned_outputs(
-    tmp_path, monkeypatch, golden, mode
+    tmp_path, monkeypatch, golden, name, mode, seed, steps
 ):
     """Pins run.json, training.json, the report, the predictions file and
     every checkpoint saved, for one seed (#216)."""
@@ -484,8 +500,8 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
         fold=FOLD,
         camera="thermal",
         percent=100,
-        seed=3,
-        recipe=recipe(mode, steps=6),
+        seed=seed,
+        recipe=recipe(mode, steps=steps),
         scratch=True,
         run_name=None,  # the default name is part of what is pinned
         device=torch.device("cpu"),
@@ -498,7 +514,7 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
     directory = Path(summary["run"])
     stored = torch.load(checkpoints / ck.CHECKPOINT_FILENAME, weights_only=True)
     golden.check(
-        f"baseline-run-{mode}",
+        f"baseline-run-{name}",
         {
             "run_dir": str(directory.relative_to(tmp_path)),
             "files": sorted(p.name for p in directory.iterdir()),
@@ -515,9 +531,11 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
                 .splitlines()
             ],
             "saves": saves,
-            # the global python and numpy RNGs are unseeded: only their layout
+            # the global python and numpy RNGs are unseeded: only their layout.
+            # The torch RNG is seeded, so its state is pinned by value.
             "checkpoint.pt": {
-                k: sorted(v) if k == "rng" else compact(v) for k, v in stored.items()
+                k: rng_layout(v, golden) if k == "rng" else compact(v)
+                for k, v in stored.items()
             },
             "attempts": json.loads((checkpoints / ck.ATTEMPTS_FILENAME).read_text()),
             "summary": {k: v for k, v in summary.items() if k != "run"},

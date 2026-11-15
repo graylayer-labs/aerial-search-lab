@@ -1,6 +1,7 @@
 """Arm C of the thermal input ablation (#68), on a tiny random tower."""
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -51,8 +52,17 @@ def write(path: Path, records: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
 
 
-def setup(tmp_path: Path, input_handling: str | None = None, grid_shift: int = 0):
-    """Raw frames, fold manifests and a replicate cache index to match."""
+def setup(
+    tmp_path: Path,
+    input_handling: str | None = None,
+    grid_shift: int = 0,
+    repeat: bool = False,
+):
+    """Raw frames, fold manifests and a replicate cache index to match.
+
+    With `repeat`, the validation and test frames are the training frames
+    again (same pixels and people, other names), so a stem and head that fit
+    the training frames score above zero and the score moves between steps."""
     rng = np.random.default_rng(1)
     processor = Siglip2ImageProcessor(patch_size=16)
     raw = tmp_path / "raw"
@@ -71,7 +81,20 @@ def setup(tmp_path: Path, input_handling: str | None = None, grid_shift: int = 0
             out.append(rec)
         return out
 
-    train, validation, test = frames(OTHER, 4), frames(OTHER, 2), frames(FOLD, 2)
+    train = frames(OTHER, 4)
+    if repeat:
+        train = [{**r, "boxes": r["boxes"] or train[1]["boxes"]} for r in train]
+
+        def again(r: dict, site: str, name: str) -> dict:
+            copy = record(site, f"{name}{Path(r['image']).stem}", r["boxes"])
+            (raw / copy["image"]).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(raw / r["image"], raw / copy["image"])
+            return copy
+
+        validation = [again(r, OTHER, "v") for r in train[:2]]
+        test = [again(r, FOLD, "t") for r in train[2:]]
+    else:
+        validation, test = frames(OTHER, 2), frames(FOLD, 2)
     view = tmp_path / "manifests" / "folds" / FOLD / "thermal"
     write(view / "train_100pct.jsonl", train)
     write(view / "validation.jsonl", validation)
@@ -128,14 +151,16 @@ def run(tmp_path: Path, cache: Path, tower, init_head=None, **recipe):
         percent=100,
         seed=7,
         recipe=se.StemRecipe(
-            steps=4,
-            batch_size=4,
-            micro_batch=2,
-            eval_every=2,
-            hidden=8,
-            stem_hidden=4,
-            eval_batch=2,
-            **recipe,
+            **{
+                "steps": 4,
+                "batch_size": 4,
+                "micro_batch": 2,
+                "eval_every": 2,
+                "hidden": 8,
+                "stem_hidden": 4,
+                "eval_batch": 2,
+                **recipe,
+            }
         ),
         scratch=True,
         run_name="stem-test",
@@ -416,14 +441,15 @@ def test_a_warm_start_from_other_manifests_is_refused(tmp_path):
         run(tmp_path, cache, tiny_tower(), init_head=init)
 
 
+STEPS = 24
 TIMINGS = ("step_seconds", "validation_seconds", "test_seconds")
 
 
 def test_a_stem_run_writes_exactly_the_pinned_outputs(tmp_path, golden):
     """Pins run.json, training.json (timings aside), the report and weights (#216)."""
-    cache = setup(tmp_path)
+    cache = setup(tmp_path, repeat=True)
 
-    summary = run(tmp_path, cache, tiny_tower(), learning_rate=0.01)
+    summary = run(tmp_path, cache, tiny_tower(), learning_rate=0.01, steps=STEPS)
 
     directory = Path(summary["run"])
     training = golden.read_json(directory / "training.json")
