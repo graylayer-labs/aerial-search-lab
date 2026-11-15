@@ -17,7 +17,6 @@ from aerial_search.data.folds import (
     VALIDATION,
     ImageSize,
     check_folds,
-    fold_table,
     train_file,
     view_dir,
     write_folds,
@@ -28,6 +27,7 @@ from aerial_search.data.wisard import (
     prepare_manifests,
     select_collections,
 )
+from aerial_search.evaluation.fold_table import fold_table
 
 DATASETS = {WISARD_SAMPLE.name: WISARD_SAMPLE, WISARD_FULL.name: WISARD_FULL}
 
