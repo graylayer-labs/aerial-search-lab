@@ -22,8 +22,6 @@ Cost, measured: see docs/thermal-input-ablation.md.
 from __future__ import annotations
 
 import copy
-import json
-import math
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -34,13 +32,10 @@ from typing import Any
 
 import numpy as np
 import torch
+from aerial_search import runner
 from aerial_search.data.folds import TEST, VALIDATION, train_file, view_dir
 from aerial_search.data.records import load_split, record_boxes
-from aerial_search.evaluation.detection import (
-    GroundTruth,
-    Prediction,
-    evaluate_detections,
-)
+from aerial_search.evaluation.detection import Prediction
 from PIL import Image
 from torch import Tensor
 
@@ -54,7 +49,8 @@ from frozen_head.head_experiment import (
     build_head,
     cache_arm,
     check_cache,
-    decode,
+    decode_outputs,
+    drop_missing,
 )
 from frozen_head.thermal_input import DEFAULT_ARM, StemBackbone, ThermalStem
 from frozen_head.warm_start import load_warm_start
@@ -180,29 +176,20 @@ def predict(
     out = []
     for group, inputs in data.source.batches(groups):
         _check_grid(inputs, [data.entries[i] for i in group])
-        heat, offset, size = (t.cpu().numpy() for t in model.forward(inputs))
-        for k, n in enumerate(group):
-            boxes, scores = decode(
-                heat[k], offset[k], size[k], split.geometry[n], top_k
-            )
-            out.append(Prediction(str(split.records[n]["image"]), boxes, scores))
+        out += decode_outputs(model.forward(inputs), split, group, top_k)
     return out
 
 
 def evaluate(model: StemModel, data: Frames, recipe: StemRecipe, *, stride: int = 1):
     split = data.split
     indices = list(range(0, len(split), stride))
-    truths = [
-        GroundTruth(
-            str(split.records[i]["image"]),
-            split.boxes[i],
-            split.camera,
-            str(split.records[i]["collection_id"]),
-        )
-        for i in indices
-    ]
     predictions = predict(model, data, indices, recipe.eval_batch, recipe.top_k)
-    return evaluate_detections(truths, predictions)
+    return runner.score(
+        [split.records[i] for i in indices],
+        predictions,
+        boxes=[split.boxes[i] for i in indices],
+        camera=split.camera,
+    )
 
 
 def accumulate(
@@ -260,24 +247,14 @@ def train(
         params, lr=recipe.learning_rate, weight_decay=recipe.weight_decay
     )
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, recipe.steps)
-    rng = np.random.default_rng(seed)
-    order: list[int] = []
-    history: dict[str, Any] = {
-        "loss": [],
-        "validation": [],
-        "best_step": None,
-        "skipped_steps": 0,
-        "step_seconds": [],
-        "validation_seconds": 0.0,
-    }
-    best, best_state = -math.inf, None
-    for step in range(1, recipe.steps + 1):
+    history = runner.new_history(
+        skipped_steps=0, step_seconds=[], validation_seconds=0.0
+    )
+
+    def step(_: int, batch: list[int]) -> float:
         started = time.perf_counter()
         model.train(True)
-        if len(order) < recipe.batch_size:
-            order += rng.permutation(len(split)).tolist()
-        index = np.sort(np.array(order[: recipe.batch_size]))
-        del order[: recipe.batch_size]
+        index = np.array(batch)
         groups = [
             index[s : s + recipe.micro_batch].tolist()
             for s in range(0, len(index), recipe.micro_batch)
@@ -304,22 +281,25 @@ def train(
         else:
             history["skipped_steps"] += 1
         schedule.step()
-        history["loss"].append(total)
         history["step_seconds"].append(time.perf_counter() - started)
-        if validate is not None and (
-            step % recipe.eval_every == 0 or step == recipe.steps
-        ):
-            began = time.perf_counter()
-            score = validate()
-            history["validation_seconds"] += time.perf_counter() - began
-            history["validation"].append({"step": step, "ap_iou25": score})
-            print(f"step {step}: loss {total:.4f}, val ap_iou25 {score:.4f}")
-            if score > best:  # NaN compares false
-                best, best_state = score, model.state()
-                history["best_step"] = step
-    if best_state is not None:
-        model.load(best_state)
-    return history
+        return total
+
+    def timed(validate: Callable[[], float]) -> float:
+        began = time.perf_counter()
+        score = validate()
+        history["validation_seconds"] += time.perf_counter() - began
+        return score
+
+    return runner.train_best_step(
+        runner.batch_order(len(split), recipe.batch_size, recipe.steps, seed),
+        step,
+        steps=recipe.steps,
+        eval_every=recipe.eval_every,
+        validate=None if validate is None else lambda: timed(validate),
+        snapshot=model.state,
+        restore=model.load,
+        selection=runner.Selection(history),
+    ).history
 
 
 def default_run_name(
@@ -331,10 +311,8 @@ def default_run_name(
     warm: bool = False,
 ):
     suffix = "-warm" if warm else ""
-    return (
-        f"detection-head/{cache_dir.name}-{ARM}{suffix}/"
-        f"{camera}-{fold}-{percent}pct-seed{seed}"
-    )
+    prefix = f"detection-head/{cache_dir.name}-{ARM}{suffix}"
+    return runner.run_name(prefix, camera, fold, percent, seed)
 
 
 def _load_backbone(model_name: str, device: torch.device):
@@ -378,7 +356,6 @@ def run_stem_head(
     frame) and settings (model, weights, token budget, pooling) are read, and
     the tower is loaded and checked against those weights. Thermal only.
     """
-    from aerial_search import run as run_module
     from aerial_search.data import checksums
 
     from frozen_head import backbone
@@ -405,13 +382,7 @@ def run_stem_head(
             f"{cache_dir} holds {cache_arm(cache.settings)!r} features; the stem "
             f"arm takes its geometry from the {DEFAULT_ARM!r} cache"
         )
-    if cache.missing:  # a scratch run only
-        print(f"scratch: {len(cache.missing)} images not in the cache, left out")
-        absent = set(cache.missing)
-        records = {
-            role: [r for r in rs if r["image"] not in absent]
-            for role, rs in records.items()
-        }
+    records = drop_missing(records, cache.missing)
     stored = cache.settings["settings"]
     spec = backbone.SPECS[stored["model"]]
     if (spec.repo, spec.revision) != (stored["repo"], stored["revision"]):
@@ -455,7 +426,7 @@ def run_stem_head(
         "normalised image, then the frozen tower and 2x2 pooling; stem and head "
         "train together; no feature file is read",
     }
-    directory = run_module.start_run(
+    with runner.experiment_run(
         run_name
         or default_run_name(cache_dir, camera, fold, percent, seed, warm is not None),
         config,
@@ -474,8 +445,7 @@ def run_stem_head(
         view=camera,
         manifests=manifests,
         data_root=data_root,
-    )
-    try:
+    ) as directory:
         # the head first, straight after the seed, exactly as run_head does, so
         # at one seed it starts from the same weights as arm A; the stem and
         # the tower draw from their own state afterwards
@@ -520,20 +490,14 @@ def run_stem_head(
         report = evaluate(model, data["test"], recipe)
         history["test_seconds"] = time.perf_counter() - began
         report.write_json(directory)
-        torch.save(head.state_dict(), directory / "head.pt")
-        torch.save(stem.state_dict(), directory / "stem.pt")
+        runner.save_weights(directory, "head", head)
+        runner.save_weights(directory, "stem", stem)
         history["targets_lost_to_shared_subcells"] = {
             role: d.split.lost for role, d in data.items()
         }
         history["crowding"] = {role: d.split.crowding() for role, d in data.items()}
         history["test_predictions_tied"] = report.overall.n_predictions_tied
-        (directory / "training.json").write_text(
-            json.dumps(history, indent=2, allow_nan=True) + "\n"
-        )
-    except BaseException as error:
-        run_module.finish_run(directory, error)
-        raise
-    run_module.finish_run(directory)
+        runner.write_training(directory, history)
     return {
         "run": str(directory),
         "best_step": history["best_step"],
