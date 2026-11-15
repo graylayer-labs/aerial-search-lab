@@ -6,6 +6,7 @@ one, test frames predicted twice or not at all, a half-written line, a
 re-score that differs from the run's own, and a resume under another config.
 """
 
+import hashlib
 import json
 import random
 from pathlib import Path
@@ -422,3 +423,102 @@ def test_the_rng_state_round_trips_the_next_global_numpy_draw() -> None:
     be._set_rng_state(saved)
     assert _global_draw(3) == first
     assert isinstance(saved["numpy"]["state"]["key"], list)
+
+
+def _leaves(value, path=""):
+    if isinstance(value, dict):
+        for k in sorted(value, key=str):
+            yield from _leaves(value[k], f"{path}/{k}")
+    elif isinstance(value, list | tuple):
+        for i, v in enumerate(value):
+            yield from _leaves(v, f"{path}/{i}")
+    else:
+        yield path, value
+
+
+def compact(value):
+    """A state as JSON, or, if it holds tensors, their count, layout and sums."""
+    leaves = list(_leaves(value))
+    if not any(isinstance(v, torch.Tensor) for _, v in leaves):
+        return json.loads(json.dumps(value, default=str))
+    layout, exact, total = hashlib.sha256(), hashlib.sha256(), 0.0
+    for path, v in leaves:
+        if isinstance(v, torch.Tensor):
+            layout.update(f"{path}:{v.dtype}:{tuple(v.shape)};".encode())
+            exact.update(v.detach().contiguous().reshape(-1).view(torch.uint8).numpy())
+            total += float(v.double().sum()) if v.is_floating_point() else 0.0
+        else:
+            exact.update(f"{path}={v!r};".encode())
+    return {
+        "tensors": sum(isinstance(v, torch.Tensor) for _, v in leaves),
+        "layout": layout.hexdigest(),
+        "sum": total,
+        "sha256_exact": exact.hexdigest(),
+    }
+
+
+@pytest.mark.parametrize("mode", ["native", "tiled"])
+def test_a_baseline_run_writes_exactly_the_pinned_outputs(
+    tmp_path, monkeypatch, golden, mode
+):
+    """Pins run.json, training.json, the report, the predictions file and
+    every checkpoint saved, for one seed (#216)."""
+    manifests, raw = fake_fold(tmp_path)
+    monkeypatch.setattr(be, "build_model", model_factory())
+    if mode == "tiled":
+        monkeypatch.setattr(be, "tile_spec", lambda camera, recipe: SPEC)
+    saves = []
+    real_save = be.Checkpoints.save
+
+    def save(self, **state):
+        saves.append({k: compact(v) for k, v in state.items()})
+        real_save(self, **state)
+
+    monkeypatch.setattr(be.Checkpoints, "save", save)
+    checkpoints = tmp_path / "ckpt"
+
+    summary = be.run_baseline(
+        manifests=manifests,
+        data_root=raw,
+        fold=FOLD,
+        camera="thermal",
+        percent=100,
+        seed=3,
+        recipe=recipe(mode, steps=6),
+        scratch=True,
+        run_name=None,  # the default name is part of what is pinned
+        device=torch.device("cpu"),
+        repo=tmp_path / "repo",
+        argv=["x"],
+        checkpoint_dir=checkpoints,
+        checkpoint_every=2,
+    )
+
+    directory = Path(summary["run"])
+    stored = torch.load(checkpoints / be.CHECKPOINT_FILENAME, weights_only=True)
+    golden.check(
+        f"baseline-run-{mode}",
+        {
+            "run_dir": str(directory.relative_to(tmp_path)),
+            "files": sorted(p.name for p in directory.iterdir()),
+            "checkpoint_files": sorted(p.name for p in checkpoints.iterdir()),
+            "run.json": golden.run_record(directory),
+            "training.json": golden.read_json(directory / "training.json"),
+            "detection_metrics.json": golden.read_json(
+                directory / "detection_metrics.json"
+            ),
+            "predictions": [
+                json.loads(line)
+                for line in (directory / pr.PREDICTIONS_FILENAME)
+                .read_text()
+                .splitlines()
+            ],
+            "saves": saves,
+            # the global python and numpy RNGs are unseeded: only their layout
+            "checkpoint.pt": {
+                k: sorted(v) if k == "rng" else compact(v) for k, v in stored.items()
+            },
+            "attempts": json.loads((checkpoints / be.ATTEMPTS_FILENAME).read_text()),
+            "summary": {k: v for k, v in summary.items() if k != "run"},
+        },
+    )

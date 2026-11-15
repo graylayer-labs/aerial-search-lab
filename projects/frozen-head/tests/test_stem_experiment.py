@@ -413,3 +413,33 @@ def test_a_warm_start_from_other_manifests_is_refused(tmp_path):
 
     with pytest.raises(CacheError, match="manifests differ"):
         run(tmp_path, cache, tiny_tower(), init_head=init)
+
+
+TIMINGS = ("step_seconds", "validation_seconds", "test_seconds")
+
+
+def test_a_stem_run_writes_exactly_the_pinned_outputs(tmp_path, golden):
+    """Pins run.json, training.json (timings aside), the report and weights (#216)."""
+    cache = setup(tmp_path)
+
+    summary = run(tmp_path, cache, tiny_tower(), learning_rate=0.01)
+
+    directory = Path(summary["run"])
+    training = golden.read_json(directory / "training.json")
+    golden.check(
+        "stem-run",
+        {
+            "files": sorted(p.name for p in directory.iterdir()),
+            "run.json": golden.run_record(directory),
+            "training.json": {k: v for k, v in training.items() if k not in TIMINGS},
+            "timings": {k: type(training[k]).__name__ for k in TIMINGS},
+            "detection_metrics.json": golden.read_json(
+                directory / "detection_metrics.json"
+            ),
+            "head.pt": golden.weights(torch.load(directory / "head.pt")),
+            "stem.pt": golden.weights(torch.load(directory / "stem.pt")),
+            "summary": sorted(summary),
+            "best_step": summary["best_step"],
+            "test": summary["test"],
+        },
+    )
