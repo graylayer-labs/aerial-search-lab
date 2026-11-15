@@ -55,9 +55,9 @@ from frozen_head.head_experiment import (
     cache_arm,
     check_cache,
     decode,
-    load_warm_start,
 )
 from frozen_head.thermal_input import DEFAULT_ARM, StemBackbone, ThermalStem
+from frozen_head.warm_start import load_warm_start
 
 ARM = "stem"
 WORKERS = 3
