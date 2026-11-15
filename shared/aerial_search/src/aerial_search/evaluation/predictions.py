@@ -163,13 +163,23 @@ def read_model_id(path: Path) -> str | None:
     return _header(first[:-1]) if first.endswith(b"\n") else None
 
 
-def truths(records: Sequence[dict]) -> list[GroundTruth]:
-    """The scorer's ground truth for fold records (camera and flight grouping)."""
+def truths(
+    records: Sequence[dict],
+    boxes: Sequence[np.ndarray] | None = None,
+    camera: str | None = None,
+) -> list[GroundTruth]:
+    """The scorer's ground truth for fold records (camera and flight grouping).
+
+    `boxes` replaces each record's own and `camera` each record's camera."""
+    boxes = [record_boxes(r) for r in records] if boxes is None else boxes
     return [
         GroundTruth(
-            str(r["image"]), record_boxes(r), str(r["camera"]), str(r["collection_id"])
+            str(r["image"]),
+            b,
+            str(r["camera"]) if camera is None else camera,
+            str(r["collection_id"]),
         )
-        for r in records
+        for r, b in zip(records, boxes, strict=True)
     ]
 
 
