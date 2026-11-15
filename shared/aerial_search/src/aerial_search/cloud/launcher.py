@@ -56,7 +56,7 @@ ENTRY_POINT = "tools/sagemaker_entry.py"
 CHECKPOINT_LOCAL = "/opt/ml/checkpoints"
 
 
-class NotFound(Exception):
+class NotFoundError(Exception):
     """An S3 object does not exist."""
 
 
@@ -330,7 +330,7 @@ def _exists(s3: Any, key: str) -> bool:
 
     try:
         s3.head_object(Bucket=BUCKET, Key=key)
-    except NotFound:
+    except NotFoundError:
         return False
     except ClientError as error:
         if error.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):

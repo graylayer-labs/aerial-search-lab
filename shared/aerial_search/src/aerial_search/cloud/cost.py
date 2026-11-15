@@ -87,7 +87,7 @@ EXPECTED_HOURS = {
 EXPECTED_HOURS_OTHER = 0.5
 
 
-class CostRefused(RuntimeError):
+class CostRefusedError(RuntimeError):
     """The cost guard refused a launch."""
 
 
@@ -107,19 +107,19 @@ class Estimate:
 
 
 def limits(instance_type: str, *, spot: bool, max_runtime_hours: float) -> Instance:
-    """The instance's prices and limits, or `CostRefused` if it is not listed,
+    """The instance's prices and limits, or `CostRefusedError` if it is not listed,
     must be spot and is not, or would run past its runtime cap."""
     instance = INSTANCES.get(instance_type)
     if instance is None:
-        raise CostRefused(
+        raise CostRefusedError(
             f"instance {instance_type!r} is not on the list ({', '.join(INSTANCES)}); "
             "an instance without a verified price is refused"
         )
     if instance.spot_only and not spot:
-        raise CostRefused(f"{instance_type} jobs must be managed spot")
+        raise CostRefusedError(f"{instance_type} jobs must be managed spot")
     cap = instance.max_runtime_hours
     if cap is not None and max_runtime_hours > cap:
-        raise CostRefused(
+        raise CostRefusedError(
             f"max runtime {max_runtime_hours} h is over the {cap} h cap for "
             f"{instance_type}; lower --max-runtime-hours"
         )
@@ -147,15 +147,15 @@ def month_to_date_eur(
     the match is on the instance family alone. Storage usage types name no
     instance and are left out (about 30 GB for 2 h a job).
     """
-    query: dict[str, Any] = dict(
-        TimePeriod={
+    query: dict[str, Any] = {
+        "TimePeriod": {
             "Start": today.replace(day=1).isoformat(),
             "End": (today + timedelta(days=1)).isoformat(),
         },
-        Granularity="MONTHLY",
-        Metrics=["UnblendedCost"],
-        Filter={"Dimensions": {"Key": "SERVICE", "Values": ["Amazon SageMaker"]}},
-    )
+        "Granularity": "MONTHLY",
+        "Metrics": ["UnblendedCost"],
+        "Filter": {"Dimensions": {"Key": "SERVICE", "Values": ["Amazon SageMaker"]}},
+    }
     try:
         if usage_family is None:
             response = ce.get_cost_and_usage(**query)
@@ -165,17 +165,17 @@ def month_to_date_eur(
             )
         else:
             usd = _family_usd(ce, query, usage_family)
-    except UsageTypeMismatch:
+    except UsageTypeMismatchError:
         raise
     except Exception as error:
-        raise CostRefused(
+        raise CostRefusedError(
             f"cannot read month-to-date spend from Cost Explorer ({error}); "
             "pass --month-to-date-eur"
         ) from error
     return usd * eur_per_usd
 
 
-class UsageTypeMismatch(CostRefused):
+class UsageTypeMismatchError(CostRefusedError):
     """SageMaker spend whose usage types name no instance (`ml.`)."""
 
 
@@ -201,7 +201,7 @@ def _family_usd(ce: Any, query: dict[str, Any], usage_family: str) -> float:
         if not token:
             break
     if total > 0 and not named:
-        raise UsageTypeMismatch(
+        raise UsageTypeMismatchError(
             f"SageMaker spent {total:.2f} USD this month but no usage type names "
             "an instance (ml.*): the usage-type format did not match, so the "
             f"{usage_family}* spend cannot be counted; pass --month-to-date-eur"
@@ -236,7 +236,7 @@ def running_jobs_eur(
         if usage_family is not None and usage_family not in instance:
             continue
         if instance not in prices:
-            raise CostRefused(
+            raise CostRefusedError(
                 f"running job {job.get('TrainingJobName')} is on {instance}, "
                 "which has no price here; its worst case cannot be counted"
             )
@@ -263,17 +263,17 @@ def check(
     run_limit_eur: float = RUN_LIMIT_EUR,
     month_limit_eur: float = MONTH_LIMIT_EUR,
 ) -> Estimate:
-    """The estimate, or `CostRefused` saying which limit it passes.
+    """The estimate, or `CostRefusedError` saying which limit it passes.
 
     `running_jobs_eur` is the worst case of the jobs running now (see
     `running_jobs_eur`); a launch that sends a job must give it."""
     if not expected_hours > 0:
-        raise CostRefused(
+        raise CostRefusedError(
             f"expected hours must be more than 0, not {expected_hours}: the "
             "estimate would be no cost at all"
         )
     if expected_hours > max_runtime_hours:
-        raise CostRefused(
+        raise CostRefusedError(
             f"expected {expected_hours} h is more than the {max_runtime_hours} h "
             "maximum runtime; the job would be stopped before it finished"
         )
@@ -282,7 +282,7 @@ def check(
     worst_usd = on_demand_price_usd * max_runtime_hours
     estimate_eur, worst_eur = estimate_usd * eur_per_usd, worst_usd * eur_per_usd
     if worst_eur > run_limit_eur:
-        raise CostRefused(
+        raise CostRefusedError(
             f"worst case {worst_eur:.2f} EUR ({max_runtime_hours} h at "
             f"{on_demand_price_usd} USD/h on demand, {eur_per_usd} EUR/USD) is "
             f"over the {run_limit_eur:.0f} EUR per-run limit; lower "
@@ -291,17 +291,17 @@ def check(
     total = None
     if month_to_date_eur is None:
         if month_required:
-            raise CostRefused(
+            raise CostRefusedError(
                 "month-to-date spend is unknown; pass --month-to-date-eur"
             )
         check_text = "not checked (dry run, no --month-to-date-eur)"
     else:
         if running_jobs_eur is None and month_required:
-            raise CostRefused("the jobs running now were not counted")
+            raise CostRefusedError("the jobs running now were not counted")
         running = running_jobs_eur or 0.0
         total = month_to_date_eur + running + worst_eur
         if total > month_limit_eur:
-            raise CostRefused(
+            raise CostRefusedError(
                 f"this month's spend so far {month_to_date_eur:.2f} EUR plus "
                 f"the worst case of jobs running now or ended in the last "
                 f"{LAG_HOURS} h {running:.2f} EUR plus this run's worst case "

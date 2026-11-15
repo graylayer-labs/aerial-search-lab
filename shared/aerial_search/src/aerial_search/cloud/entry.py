@@ -65,7 +65,7 @@ ATTESTATION_ENV = "AERIAL_SEARCH_ATTESTATION"
 FEATURES_ENV = "AERIAL_SEARCH_FEATURES"  # as the launcher's
 
 
-class JobRefused(RuntimeError):
+class JobRefusedError(RuntimeError):
     """The job will not run: its code or inputs are not what was launched."""
 
 
@@ -112,39 +112,43 @@ def prepare(
         baseline_args = json.loads(environ["AERIAL_SEARCH_BASELINE_ARGS"])
         logical_run = environ["AERIAL_SEARCH_LOGICAL_RUN"]
     except (KeyError, ValueError) as error:
-        raise JobRefused(f"the job's environment is incomplete: {error!r}") from None
+        raise JobRefusedError(
+            f"the job's environment is incomplete: {error!r}"
+        ) from None
     if not environ.get("TRAINING_JOB_NAME"):
-        raise JobRefused("not inside a SageMaker training job (no TRAINING_JOB_NAME)")
+        raise JobRefusedError(
+            "not inside a SageMaker training job (no TRAINING_JOB_NAME)"
+        )
     command = environ.get("AERIAL_SEARCH_COMMAND", "train-baseline")
     if command not in ("train-baseline", "train-head"):
-        raise JobRefused(
+        raise JobRefusedError(
             f"the job has no inputs for {command!r}; only train-baseline and "
             "train-head run in a job"
         )
     if command == "train-head" and FEATURES_ENV not in environ:
-        raise JobRefused(
+        raise JobRefusedError(
             f"train-head needs its feature cache, but {FEATURES_ENV} is unset"
         )
     actual = source.digest_dir(code_root)
     if actual != attestation.get("source_sha256"):
-        raise JobRefused(
+        raise JobRefusedError(
             f"the source in {code_root} ({actual}) is not the archive the "
             f"launcher made ({attestation.get('source_sha256')})"
         )
     actual = source.digest_dir(manifests)
     if actual != attestation.get("manifests_sha256"):
-        raise JobRefused(
+        raise JobRefusedError(
             f"the manifests in {manifests} ({actual}) are not the ones the "
             f"launcher sent ({attestation.get('manifests_sha256')})"
         )
     try:
         actual = hashlib.sha256(constraints.read_bytes()).hexdigest()
     except OSError as error:
-        raise JobRefused(
+        raise JobRefusedError(
             f"cannot read the constraints {constraints}: {error}"
         ) from None
     if actual != attestation.get("constraints_sha256"):
-        raise JobRefused(
+        raise JobRefusedError(
             f"the constraints in {constraints} ({actual}) are not the ones the "
             f"launcher sent ({attestation.get('constraints_sha256')})"
         )
@@ -182,9 +186,9 @@ def _sent_features(environ: Mapping[str, str]) -> tuple[str, str]:
         sent = json.loads(environ[FEATURES_ENV])
         digest, cache = str(sent["features_sha256"]), str(sent["cache"])
     except (KeyError, ValueError, TypeError) as error:
-        raise JobRefused(f"unreadable {FEATURES_ENV}: {error!r}") from None
+        raise JobRefusedError(f"unreadable {FEATURES_ENV}: {error!r}") from None
     if not plain_cache_name(cache):
-        raise JobRefused(f"the cache name {cache!r} is not <parent>/<directory>")
+        raise JobRefusedError(f"the cache name {cache!r} is not <parent>/<directory>")
     return digest, cache
 
 
@@ -195,7 +199,7 @@ def _linked_cache(
     digest, cache = _sent_features(environ)
     actual = source.digest_dir(features)
     if actual != digest:
-        raise JobRefused(
+        raise JobRefusedError(
             f"the features in {features} ({actual}) are not the ones the "
             f"launcher sent ({digest})"
         )
@@ -318,7 +322,7 @@ def main(environ: Mapping[str, str] | None = None) -> None:
             features=FEATURES,
             feature_links=FEATURE_LINKS,
         )
-    except JobRefused as error:
+    except JobRefusedError as error:
         raise SystemExit(f"refusing to run: {error}") from error
     if FEATURES_ENV in environ:  # start_run reads the attestation from here
         os.environ[ATTESTATION_ENV] = job_attestation(environ)

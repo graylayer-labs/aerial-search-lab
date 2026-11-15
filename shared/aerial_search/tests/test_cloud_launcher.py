@@ -17,20 +17,22 @@ from aerial_search.cloud import cost, launcher, source
 
 # --- the request ------------------------------------------------------------------
 
-BASE: dict[str, Any] = dict(
-    logical_run="detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7",
-    attempt=1,
-    commit="a" * 40,
-    source_sha256="b" * 64,
-    manifests_sha256="c" * 64,
-    constraints_sha256="d" * 64,
-    baseline_args=["rgb", "--percent", "10", "--fold", "220109_Baker"],
-    role_arn="arn:aws:iam::123456789012:role/r",
-    spot=True,
-    max_runtime_hours=12.0,
-    max_wait_hours=18.0,
-    scratch=False,
-)
+BASE: dict[str, Any] = {
+    "logical_run": (
+        "detection-baseline/fasterrcnn_resnet50_fpn-tiled/rgb-220109_Baker-10pct-seed7"
+    ),
+    "attempt": 1,
+    "commit": "a" * 40,
+    "source_sha256": "b" * 64,
+    "manifests_sha256": "c" * 64,
+    "constraints_sha256": "d" * 64,
+    "baseline_args": ["rgb", "--percent", "10", "--fold", "220109_Baker"],
+    "role_arn": "arn:aws:iam::123456789012:role/r",
+    "spot": True,
+    "max_runtime_hours": 12.0,
+    "max_wait_hours": 18.0,
+    "scratch": False,
+}
 
 
 def request(**over: Any) -> dict[str, Any]:
@@ -77,9 +79,7 @@ def test_everything_the_job_writes_is_under_sagemaker() -> None:
     assert r["CheckpointConfig"]["S3Uri"].startswith(bucket + "sagemaker/")
     for channel in r["InputDataConfig"]:
         uri = channel["DataSource"]["S3DataSource"]["S3Uri"]
-        assert uri.startswith(bucket + "wisard/raw/") or uri.startswith(
-            bucket + "sagemaker/"
-        )
+        assert uri.startswith((bucket + "wisard/raw/", bucket + "sagemaker/"))
     hp = json.loads(r["HyperParameters"]["sagemaker_submit_directory"])
     assert hp.startswith(bucket + "sagemaker/")
 
@@ -181,26 +181,26 @@ def launch(repo: Path | None, tmp_path: Path, **over: Any) -> Any:
     def no_aws() -> Any:
         raise AssertionError("a dry run must not touch AWS")
 
-    args: dict[str, Any] = dict(
-        repo=repo,
-        logical_run="exp",
-        baseline_args=["rgb", "--percent", "10", "--fold", "f"],
-        manifests=manifests,
-        scratch=False,
-        attempt=1,
-        spot=True,
-        max_runtime_hours=12.0,
-        max_wait_hours=18.0,
-        expected_hours=3.0,
-        eur_per_usd=1.0,
-        month_to_date_eur=0.0,
-        role_arn="arn:aws:iam::1:role/r",
-        image_uri=None,
-        dry_run=True,
-        session_factory=no_aws,
-        export_constraints=lambda root: PINS,
-        list_running=lambda session: [],
-    )
+    args: dict[str, Any] = {
+        "repo": repo,
+        "logical_run": "exp",
+        "baseline_args": ["rgb", "--percent", "10", "--fold", "f"],
+        "manifests": manifests,
+        "scratch": False,
+        "attempt": 1,
+        "spot": True,
+        "max_runtime_hours": 12.0,
+        "max_wait_hours": 18.0,
+        "expected_hours": 3.0,
+        "eur_per_usd": 1.0,
+        "month_to_date_eur": 0.0,
+        "role_arn": "arn:aws:iam::1:role/r",
+        "image_uri": None,
+        "dry_run": True,
+        "session_factory": no_aws,
+        "export_constraints": lambda root: PINS,
+        "list_running": lambda session: [],
+    }
     return launcher.launch(**{**args, **over})
 
 
@@ -250,7 +250,8 @@ def test_the_constraints_come_from_uv_export_of_the_lock() -> None:
     root = Path(__file__).resolve().parents[3]
     text = source.export_constraints(root).decode()
     assert "\npycocotools==" in text
-    assert "--frozen" in text and "--no-hashes" in text
+    assert "--frozen" in text
+    assert "--no-hashes" in text
 
 
 def test_a_dirty_tree_is_refused(repo: Path, tmp_path: Path) -> None:
@@ -293,7 +294,7 @@ def test_unverified_or_scratch_manifests_are_refused_before_submission(
 def test_the_cost_guard_runs_before_anything_is_sent(
     repo: Path, tmp_path: Path
 ) -> None:
-    with pytest.raises(cost.CostRefused):
+    with pytest.raises(cost.CostRefusedError):
         launch(repo, tmp_path, max_runtime_hours=24.0, max_wait_hours=30.0)
 
 
@@ -310,7 +311,7 @@ def test_the_launch_counts_running_jobs_before_sending(
         sessions.append(session)
         return [running(seconds=12 * 3600)]  # 9.86 EUR worst case
 
-    with pytest.raises(cost.CostRefused, match="running"):
+    with pytest.raises(cost.CostRefusedError, match="running"):
         launch(
             repo,
             tmp_path,
@@ -330,7 +331,7 @@ def test_submission_uploads_the_source_then_creates_the_job(
     class S3:
         def head_object(self, **kw: Any) -> Any:
             calls.append(("head", kw["Key"]))
-            raise launcher.NotFound()
+            raise launcher.NotFoundError()
 
         def put_object(self, **kw: Any) -> None:
             calls.append(("put", kw["Key"]))
@@ -383,8 +384,8 @@ def test_running_jobs_are_listed_in_progress_and_described() -> None:
             assert name == "list_training_jobs"
             return Pages()
 
-        def describe_training_job(self, TrainingJobName: str) -> Any:
-            return {**running(), "TrainingJobName": TrainingJobName}
+        def describe_training_job(self, **params: str) -> Any:
+            return {**running(), "TrainingJobName": params["TrainingJobName"]}
 
     class Session:
         def client(self, name: str, **_: Any) -> Any:
@@ -418,9 +419,11 @@ def test_a_cpu_request_runs_on_m5_with_the_cpu_image_and_names_its_command() -> 
     assert r["EnableManagedSpotTraining"] is True
 
 
-CPU: dict[str, Any] = dict(
-    instance_type="ml.m5.xlarge", max_runtime_hours=2.0, max_wait_hours=4.0
-)
+CPU: dict[str, Any] = {
+    "instance_type": "ml.m5.xlarge",
+    "max_runtime_hours": 2.0,
+    "max_wait_hours": 4.0,
+}
 
 
 def test_a_cpu_dry_run_is_priced_at_the_m5_rate(repo: Path, tmp_path: Path) -> None:
@@ -437,14 +440,16 @@ class Bucket:
         self.keys = set(keys or ())
         self.calls: list[tuple[str, str]] = []
 
-    def head_object(self, *, Bucket: str, Key: str) -> Any:
-        self.calls.append(("head", Key))
-        if Key not in self.keys:
-            raise launcher.NotFound()
+    def head_object(self, **params: str) -> Any:
+        key = params["Key"]
+        self.calls.append(("head", key))
+        if key not in self.keys:
+            raise launcher.NotFoundError()
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> None:
-        self.calls.append(("put", Key))
-        self.keys.add(Key)
+    def put_object(self, **params: Any) -> None:
+        key = params["Key"]
+        self.calls.append(("put", key))
+        self.keys.add(key)
 
     def upload_file(self, filename: str, bucket: str, key: str) -> None:
         self.calls.append(("upload", key))
@@ -590,13 +595,21 @@ def test_a_cache_name_the_job_would_refuse_is_refused_before_sending(
             dry_run=False,
             session_factory=lambda: cloud,
         )
-    assert not cloud.s3.calls and not cloud.created
+    assert not cloud.s3.calls
+    assert not cloud.created
 
 
 @pytest.mark.parametrize(
     ("cache", "plain"),
-    [("features/m-1024tok", True), ("../x", False), ("a/b/c", False), ("x", False)]
-    + [("features/..", False), ("/abs", False), ("a b/c", False)],
+    [
+        ("features/m-1024tok", True),
+        ("../x", False),
+        ("a/b/c", False),
+        ("x", False),
+        ("features/..", False),
+        ("/abs", False),
+        ("a b/c", False),
+    ],
 )
 def test_the_launcher_and_job_share_one_cache_name_rule(
     cache: str, plain: bool
@@ -624,14 +637,14 @@ def test_a_head_dry_run_names_the_features_channel_and_uploads_nothing(
 @pytest.mark.parametrize(
     ("over", "match"),
     [
-        (dict(max_runtime_hours=3.0), "cap"),
-        (dict(spot=False), "spot"),
-        (dict(month_to_date_eur=4.6), "5 EUR month limit"),
-        (dict(instance_type="ml.m5.large"), "not on the list"),
+        ({"max_runtime_hours": 3.0}, "cap"),
+        ({"spot": False}, "spot"),
+        ({"month_to_date_eur": 4.6}, "5 EUR month limit"),
+        ({"instance_type": "ml.m5.large"}, "not on the list"),
     ],
 )
 def test_the_cpu_limits_refuse_before_anything_is_sent(
     repo: Path, tmp_path: Path, over: dict[str, Any], match: str
 ) -> None:
-    with pytest.raises(cost.CostRefused, match=match):
+    with pytest.raises(cost.CostRefusedError, match=match):
         launch(repo, tmp_path, **{**CPU, "expected_hours": 0.5, **over})

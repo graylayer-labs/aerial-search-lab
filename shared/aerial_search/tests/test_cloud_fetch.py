@@ -127,7 +127,7 @@ def test_fetch_refuses_a_run_json_commit_that_is_not_the_attested_one(
     out.mkdir()
     record = attested_record(repo)
     record["commit"] = "a" * 40
-    with pytest.raises(run_module.ProvenanceError, match="run.json"):
+    with pytest.raises(run_module.ProvenanceError, match=r"run.json"):
         launcher.fetch("ssl-aerial-exp-1", job_session(record), out, repo=repo)
     assert not list(out.iterdir())
 
@@ -199,6 +199,6 @@ def test_fetch_refuses_an_output_with_no_run(repo: Path, tmp_path: Path) -> None
     out = tmp_path / "outputs"
     out.mkdir()
     session = job_session(attested_record(repo), "r-a1/notes.json")
-    with pytest.raises(run_module.ProvenanceError, match="no run.json"):
+    with pytest.raises(run_module.ProvenanceError, match=r"no run.json"):
         launcher.fetch("ssl-aerial-exp-1", session, out, repo=repo)
     assert not list(out.iterdir())
