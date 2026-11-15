@@ -47,13 +47,7 @@ CI runs these four checks. More in `recipes.md`.
   unused). Only the current epic has sub-issues; follow its "Order of work".
   An epic row stays In Progress while any task is open. Work that crosses
   milestones is a standalone issue with no parent.
-- Labels: `agent:fable|opus|sonnet|haiku`, `type:bug|enhancement|documentation|
-  experiment`, `epic`, `needs-owner`, `tooling-candidate`. The org template's
-  `data:`, `model:`, `source:`, `status:` labels are unused.
-- Two standing issues never close: "Reusable tooling candidates" (#9) and
-  "Audit log" (#24). A step done by hand that others would repeat: comment on #9.
-- Commands to attach sub-issues, read a task and move an item:
-  `recipes.md`.
+- Labels, standing issues and board commands: `recipes.md`, Work the board.
 
 ## Repo rules
 
@@ -65,10 +59,10 @@ CI runs these four checks. More in `recipes.md`.
   commits cannot verify yet (owner, 2026-11-14, #215).
 - Every PR closes an issue, except Dependabot PRs: the lead merges those when
   `checks` and `gate` pass.
-- Logic under any `src/`, experiments and metrics are checked by the
-  `reviewer` agent before auto-merge; docs and config are read by the lead.
-  The PR says which, and its Evidence section holds the pasted output of the
-  lead's own re-run of the checks.
+- Logic under `shared/` or `projects/*/src/`, experiments and metrics are
+  checked by the `reviewer` agent before auto-merge; docs and config are read
+  by the lead. The PR says which, and its Evidence section holds the pasted
+  output of the lead's own re-run of the checks.
 - Project agents and skills live in `.claude/agents/` and `.claude/skills/`
   (`/tidy`, `/audit`, `/coldstart`, `/guide`, `/blog`). A rule change here is
   carried into the file that implements it, in the same PR.
@@ -109,11 +103,9 @@ CI runs these four checks. More in `recipes.md`.
 - Profile `ssl-aerial` (`AWS_PROFILE` in `.claude/settings.json`) assumes role
   `ssl-aerial-person-detection-agent`: list, read and write objects in the
   project bucket, nothing else; no deletes, no bucket changes. Never name
-  another profile (the owner's sign-in is administrator). A fresh machine
-  needs the profile in `~/.aws/config`: `role_arn` of that role,
-  `source_profile` of the owner's sign-in, region `eu-west-1`. Expired token:
-  ask the owner to sign in again. The AWS names keep the repo's old name on
-  purpose (#160).
+  another profile (the owner's sign-in is administrator). Fresh machine:
+  `recipes.md`, "Set up the AWS profile". Expired token: ask the owner to
+  sign in again. The AWS names keep the repo's old name on purpose (#160).
 - Cloud GPU: `aerial-search sagemaker-train`, `ml.g4dn.xlarge`, managed spot
   with checkpoints, EUR 15 per run and EUR 60 per calendar month (owner,
   2026-10-14 #109, confirmed #125). Spot only: AWS declined on-demand
@@ -150,14 +142,7 @@ CI runs these four checks. More in `recipes.md`.
 
 ## Documentation
 
-One home for each fact: why the project exists `INTENT.md`; what is planned
-the board; decisions `docs/decisions.md` (`YYYY-MM-DD · chose X over Y ·
-reason`; a reversed one keeps its line, prefixed `Superseded by the <date>
-line:`); long evidence `docs/<topic>-review.md`; guide notes
-`docs/guide/notes/<issue>.md`, deleted once in a chapter.
-
-`CHANGELOG.md` is key items only, newest first, grouped by epic and date, one
-or two sentences with a link, no version numbers. Add an entry in the same PR
-for: a finding that changes what can be trusted, a result (positive or
-negative), a change of direction, a new capability, dataset or model, a rule
-that changes how work is done, something tried and dropped.
+One home per fact: why `INTENT.md`; plans, the board; decisions
+`docs/decisions.md`; evidence `docs/<topic>-review.md`; guide notes
+`docs/guide/notes/<issue>.md`, deleted once in a chapter. Changelog rules:
+`recipes.md`, "Write a changelog entry".

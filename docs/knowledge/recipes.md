@@ -43,6 +43,9 @@ gh project item-edit --project-id PVT_kwDOEDMalc4BlE5m --id <item-id> \
   --field-id PVTSSF_lADOEDMalc4BlE5mzhjzG-Q --single-select-option-id <option>
 ```
 
+- Labels in use: `agent:fable|opus|sonnet|haiku`, `type:bug|enhancement|documentation|experiment`, `epic`, `needs-owner`, `tooling-candidate`. The org template's `data:`, `model:`, `source:`, `status:` labels are unused.
+- Two standing issues never close: "Reusable tooling candidates" (#9) and "Audit log" (#24). A step done by hand that others would repeat: comment on #9.
+
 ## Add an approach
 
 Start from `projects/_template` (steps in `projects/README.md`). Write its
@@ -80,6 +83,13 @@ commits and nothing else.
   needs its own key, registered on GitHub, and the three `git config --local`
   lines in issue #27.
 - Never copy the private key anywhere, and never commit it.
+
+## Set up the AWS profile
+
+On a fresh machine, add the profile `ssl-aerial` to `~/.aws/config`:
+`role_arn` of role `ssl-aerial-person-detection-agent`, `source_profile` of
+the owner's sign-in, region `eu-west-1`. Rules for the profile: `CLAUDE.md`,
+"AWS and compute".
 
 ## Pin, check and fetch the data
 
@@ -266,3 +276,13 @@ uv run python tools/pairing_contact_sheets.py data/raw/wisard-full \
   record. A usage-type format with no `ml.` in it is refused, not read as
   zero. The GPU request is
   pinned by `shared/aerial_search/tests/fixtures/gpu_request.json`.
+
+## Write a changelog entry
+
+`CHANGELOG.md` is key items only, newest first, grouped by epic and date. Each
+entry is one or two sentences with a link to its issue or PR; no version
+numbers. Add an entry in the same PR for: a finding that changes what can be
+trusted, a result (positive or negative), a change of direction or method, a
+new capability, dataset or model, a rule that changes how work is done,
+something tried and dropped. Leave out routine fixes, refactors and wording
+changes.

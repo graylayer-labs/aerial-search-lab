@@ -1,6 +1,7 @@
 # Decisions
 
 One line each, newest first. Format: `YYYY-MM-DD · chose X over Y · reason`.
+A reversed decision keeps its line, prefixed `Superseded by the <date> line:`.
 
 - 2026-10-02 · chose one feature file per image, with the model, weight checksum, token budget, pooling and dtype in a cache record, over one file per clip · each write is one atomic rename so a crash loses one image, a fold reads only its files, and a run with other settings is refused. See #65.
 - 2026-10-01 · chose to sign every commit with a passphrase-less project key over signing only on `main` · the owner asked for branch commits signed too, and agents cannot type a passphrase. See #27.
