@@ -8,7 +8,8 @@ Where things are in this repo, so a session opens the right file first.
 pyproject.toml       uv workspace root; not a package itself
 shared/aerial_search/  the shared evaluation, package aerial_search: data/
                      (pairing, folds, records), evaluation/ (metrics, tables),
-                     run.py, cloud/, the aerial-search CLI; and its tests/
+                     run.py, runner.py, cloud/, the aerial-search CLI;
+                     and its tests/
 projects/<name>/     one package per approach, with its README and tests/
 projects/_template/  the starting point for a new approach
 docs/                milestone write-ups and decision notes
@@ -24,6 +25,8 @@ outputs/             run artefacts (git-ignored)
 | `shared/aerial_search/src/aerial_search/data/wisard.py` | Pairing of RGB and thermal frames; `WISARD_COLLECTIONS` | `docs/wisard-pairing-review.md` |
 | `shared/aerial_search/src/aerial_search/data/checksums/` | The pinned dataset list, `wisard-full.tsv.gz` | `CLAUDE.md` (Data) |
 | `shared/aerial_search/src/aerial_search/run.py` | `start_run`: clean-main check, `run.json` | `CLAUDE.md` (Experiments) |
+| `shared/aerial_search/src/aerial_search/runner.py` | What every experiment repeats: `experiment_run` (start and finish a run), `run_name`, `write_training`, `score`, `batch_order`, `train_best_step` | the module docstring |
+| `projects/*/tests/fixtures/golden/`, `projects/conftest.py` | Pinned outputs of whole runs; `UPDATE_GOLDEN=1` rewrites them, only for an intended change | `projects/conftest.py` |
 | `shared/aerial_search/src/aerial_search/cloud/` | SageMaker launcher, cost guard, job entry | `cloud/entry.py` |
 | `shared/aerial_search/tests/fixtures/gpu_request.json` | Pins the GPU job request | `recipes.md` (cloud run) |
 | `projects/finetuned-detector/` | The bar: a fine-tuned detector | its `README.md` |
