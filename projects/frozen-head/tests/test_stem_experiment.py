@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
-from transformers import Siglip2ImageProcessor, Siglip2VisionConfig, Siglip2VisionModel
+from transformers.models.siglip2 import (
+    Siglip2ImageProcessor,
+    Siglip2VisionConfig,
+    Siglip2VisionModel,
+)
 
 from frozen_head import stem_experiment as se
 from frozen_head.backbone import SPECS
@@ -155,7 +159,8 @@ def test_a_scratch_run_trains_the_stem_and_head_and_leaves_the_tower_alone(tmp_p
 
     directory = tmp_path / "repo" / "outputs" / "scratch-stem-test"
     record = json.loads((directory / "run.json").read_text())
-    assert record["status"] == "completed" and record["scratch"] is True
+    assert record["status"] == "completed"
+    assert record["scratch"] is True
     assert record["config"]["input_handling"] == "stem"
     assert record["config"]["recipe"]["micro_batch"] == 2
     metrics = json.loads((directory / "detection_metrics.json").read_text())
@@ -168,7 +173,8 @@ def test_a_scratch_run_trains_the_stem_and_head_and_leaves_the_tower_alone(tmp_p
     stem = torch.load(directory / "stem.pt")
     assert stem["out.weight"].abs().sum() > 0  # moved off the identity
     training = json.loads((directory / "training.json").read_text())
-    assert len(training["loss"]) == 4 and training["best_step"] in (2, 4)
+    assert len(training["loss"]) == 4
+    assert training["best_step"] in (2, 4)
     assert len(training["step_seconds"]) == 4
 
 

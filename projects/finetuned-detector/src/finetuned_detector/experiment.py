@@ -29,6 +29,7 @@ from typing import Any
 import numpy as np
 import torch
 import torchvision.transforms.v2.functional as vision
+from numpy.random import mtrand
 from torch.utils.data import DataLoader, Dataset
 from torchvision.io import ImageReadMode, decode_image
 
@@ -402,7 +403,9 @@ def checkpoint_identity(
 
 
 def _rng_state() -> dict[str, Any]:
-    numpy = np.random.get_state(legacy=False)
+    numpy = mtrand.get_bit_generator().state
+    # No has_gauss/gauss here (the legacy normal-draw cache): resume is exact
+    # because no code draws normals from the global numpy generator.
     assert isinstance(numpy, dict)
     # Plain lists and tensors only, so the checkpoint loads with weights_only.
     key = np.asarray(numpy["state"]["key"]).tolist()
@@ -417,7 +420,10 @@ def _set_rng_state(state: dict[str, Any]) -> None:
     random.setstate(state["python"])
     numpy = state["numpy"]
     key = np.asarray(numpy["state"]["key"], dtype=np.uint32)
-    np.random.set_state({**numpy, "state": {**numpy["state"], "key": key}})
+    mtrand.get_bit_generator().state = {
+        **numpy,
+        "state": {**numpy["state"], "key": key},
+    }
     torch.set_rng_state(state["torch"])
 
 

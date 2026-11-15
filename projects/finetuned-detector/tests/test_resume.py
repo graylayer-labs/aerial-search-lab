@@ -7,11 +7,13 @@ re-score that differs from the run's own, and a resume under another config.
 """
 
 import json
+import random
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+from numpy.random import mtrand
 from PIL import Image
 
 from aerial_search import cli
@@ -58,7 +60,7 @@ def fake_fold(tmp_path: Path) -> tuple[Path, Path]:
     return manifests, raw
 
 
-class Crash(RuntimeError):
+class CrashError(RuntimeError):
     pass
 
 
@@ -84,7 +86,7 @@ def model_factory(
                 if model.training:
                     calls["n"] += 1
                     if calls["n"] == crash_at_train_call:
-                        raise Crash("spot instance stopped")
+                        raise CrashError("spot instance stopped")
                 elif eval_sizes is not None:
                     eval_sizes.append(len(images))
                 return real_forward(images, targets)
@@ -148,7 +150,7 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path, monkeypatch, mode):
     # Stopped during step 3, after the checkpoint at step 2: step 3 is redone.
     shared = tmp_path / "checkpoints"
     monkeypatch.setattr(be, "build_model", model_factory(crash_at_train_call=3))
-    with pytest.raises(Crash):
+    with pytest.raises(CrashError):
         run(tmp_path, manifests, raw, "first", mode, checkpoint_dir=shared)
     first = json.loads((run_dir(tmp_path, "first") / "run.json").read_text())
     assert first["status"] == "failed"
@@ -158,14 +160,16 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path, monkeypatch, mode):
 
     record = json.loads((run_dir(tmp_path, "second") / "run.json").read_text())
     assert record["status"] == "completed"
-    assert record["resumed_from_step"] == 2 and record["resumes"] == 1
+    assert record["resumed_from_step"] == 2
+    assert record["resumes"] == 1
     assert record["checkpoint"]["directory"] == str(shared)
 
     whole_dir, second_dir = run_dir(tmp_path, "whole"), run_dir(tmp_path, "second")
     a = json.loads((whole_dir / "training.json").read_text())
     b = json.loads((second_dir / "training.json").read_text())
     np.testing.assert_allclose(a["loss"], b["loss"], rtol=1e-6)
-    assert a["validation"] == b["validation"] and a["best_step"] == b["best_step"]
+    assert a["validation"] == b["validation"]
+    assert a["best_step"] == b["best_step"]
     wa = final_weights(own)
     wb = final_weights(shared)
     assert wa.keys() == wb.keys()
@@ -191,12 +195,12 @@ def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
 
     def crash_after_two(self, prediction):
         if len(appended) == 2:
-            raise Crash("spot instance stopped")
+            raise CrashError("spot instance stopped")
         appended.append(prediction.image_id)
         real_append(self, prediction)
 
     monkeypatch.setattr(pr.PredictionLog, "append", crash_after_two)
-    with pytest.raises(Crash):
+    with pytest.raises(CrashError):
         run(tmp_path, manifests, raw, "first", mode, checkpoint_dir=shared)
     assert len(appended) == 2
 
@@ -224,7 +228,8 @@ def test_predictions_survive_a_crash_mid_test_without_duplicates_or_gaps(
     assert list(json.loads(header)) == ["model_id"]  # the trained weights' id
     assert [json.loads(x)["image"] for x in frames] == tests
     record = json.loads((run_dir(tmp_path, "second") / "run.json").read_text())
-    assert record["resumed_from_step"] == 4 and record["resumed_predictions"] == 2
+    assert record["resumed_from_step"] == 4
+    assert record["resumed_predictions"] == 2
 
     monkeypatch.setattr(be, "build_model", model_factory())
     run(tmp_path, manifests, raw, "whole", mode)
@@ -307,7 +312,7 @@ def test_resuming_under_another_config_or_seed_is_refused(
     )
     shared = tmp_path / "checkpoints"
     monkeypatch.setattr(be, "build_model", model_factory(crash_at_train_call=3))
-    with pytest.raises(Crash):
+    with pytest.raises(CrashError):
         run(tmp_path, manifests, raw, "first", "native", checkpoint_dir=shared)
     monkeypatch.setattr(be, "build_model", model_factory())
     with pytest.raises(be.CheckpointError, match="does not match"):
@@ -368,7 +373,7 @@ def test_resuming_after_the_test_manifest_changed_is_refused(tmp_path, monkeypat
     manifests, raw = fake_fold(tmp_path)
     shared = tmp_path / "checkpoints"
     monkeypatch.setattr(be, "build_model", model_factory(crash_at_train_call=3))
-    with pytest.raises(Crash):
+    with pytest.raises(CrashError):
         run(tmp_path, manifests, raw, "first", "native", checkpoint_dir=shared)
     test = manifests / "folds" / FOLD / "thermal" / "test.jsonl"
     test.write_text(test.read_text().replace('"x_center": 0.4', '"x_center": 0.45'))
@@ -390,3 +395,31 @@ def test_a_default_checkpoint_is_deleted_on_completion_an_explicit_one_kept(
     explicit = tmp_path / "explicit"
     run(tmp_path, manifests, raw, "explicit", "native", checkpoint_dir=explicit)
     assert (explicit / be.CHECKPOINT_FILENAME).exists()
+
+
+def _global_draw(count: int) -> list[float]:
+    generator = np.random.Generator(mtrand.get_bit_generator())
+    return generator.random(count).tolist()
+
+
+def test_an_old_checkpoint_rng_state_restores_the_global_numpy_stream() -> None:
+    # The dict a checkpoint written with the legacy get_state API holds.
+    reference = np.random.RandomState(123)
+    numpy_state = reference.get_state(legacy=False)
+    numpy_state["state"]["key"] = numpy_state["state"]["key"].tolist()
+    expected = np.random.Generator(reference._bit_generator).random(4).tolist()
+    state = {
+        "python": random.getstate(),
+        "numpy": numpy_state,
+        "torch": torch.get_rng_state(),
+    }
+    be._set_rng_state(state)
+    assert _global_draw(4) == expected
+
+
+def test_the_rng_state_round_trips_the_next_global_numpy_draw() -> None:
+    saved = be._rng_state()
+    first = _global_draw(3)
+    be._set_rng_state(saved)
+    assert _global_draw(3) == first
+    assert isinstance(saved["numpy"]["state"]["key"], list)

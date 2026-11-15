@@ -82,7 +82,8 @@ def test_check_cache_lists_missing_frames_and_exits_1(monkeypatch, capsys) -> No
     monkeypatch.setattr(feature_cache, "missing_frames", missing_frames)
     with pytest.raises(SystemExit) as failed:
         cli.main(["check-cache", "c", "m", "--camera", "thermal"])
-    assert failed.value.code == 1 and seen["cameras"] == ("thermal",)
+    assert failed.value.code == 1
+    assert seen["cameras"] == ("thermal",)
     assert capsys.readouterr().out == "thermal: 1 missing\n  a.jpg\n"
 
 
@@ -99,8 +100,10 @@ def test_cache_features_passes_its_flags_and_refuses_clearly(monkeypatch) -> Non
     command = ["cache-features", "siglip2-base-naflex", "--camera", "rgb"]
     with pytest.raises(SystemExit, match="refusing to cache: settings differ"):
         cli.main([*command, "--part", "1/2", "--scratch"])
-    assert seen["part"] == (1, 2) and seen["scratch"] is True
-    assert seen["camera"] == "rgb" and seen["input_handling"] == "replicate"
+    assert seen["part"] == (1, 2)
+    assert seen["scratch"] is True
+    assert seen["camera"] == "rgb"
+    assert seen["input_handling"] == "replicate"
     monkeypatch.setattr(feature_cache, "cache_features", lambda **kw: Summary())
     cli.main(command)
 
@@ -129,5 +132,7 @@ def test_train_head_takes_a_camera_fold_fraction_and_recipe(monkeypatch) -> None
     )
     command = ["train-head", "rgb", "--fold", "F", "--percent", "1", "--steps", "9"]
     cli.main([*command, "--scratch", "--device", "cpu"])
-    assert seen["recipe"].steps == 9 and seen["scratch"] is True
-    assert seen["percent"] == 1 and seen["camera"] == "rgb"
+    assert seen["recipe"].steps == 9
+    assert seen["scratch"] is True
+    assert seen["percent"] == 1
+    assert seen["camera"] == "rgb"

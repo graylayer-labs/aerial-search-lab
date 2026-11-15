@@ -294,7 +294,7 @@ def test_a_normal_run_refuses_features_from_an_unfinished_session(tmp_path, stat
     cache = fake_cache(tmp_path, records)
     record = {"scratch": False, **({"status": status} if status else {})}
     (cache / "runs" / "s1" / "run.json").write_text(json.dumps(record))
-    with pytest.raises(CacheError, match="s1.*not completed"):
+    with pytest.raises(CacheError, match=r"s1.*not completed"):
         he.check_cache(cache, records, "thermal", scratch=False)
     he.check_cache(cache, records, "thermal", scratch=True)
 
@@ -303,7 +303,7 @@ def test_a_normal_run_refuses_a_cache_being_written(tmp_path):
     records = [rec("x", "210417_MtErie_I/a.jpg", [])]
     cache = fake_cache(tmp_path, records)
     (cache / "session.lock").write_text("pid 1 session s2\n")
-    with pytest.raises(CacheError, match="session.lock"):
+    with pytest.raises(CacheError, match=r"session.lock"):
         he.check_cache(cache, records, "thermal", scratch=False)
     he.check_cache(cache, records, "thermal", scratch=True)
 
@@ -369,8 +369,10 @@ def test_a_scratch_run_trains_selects_and_writes_its_report(tmp_path):
 
     directory = tmp_path / "repo" / "outputs" / "scratch-head-test"
     record = json.loads((directory / "run.json").read_text())
-    assert record["status"] == "completed" and record["scratch"] is True
-    assert record["fold"] == fold and record["view"] == "thermal"
+    assert record["status"] == "completed"
+    assert record["scratch"] is True
+    assert record["fold"] == fold
+    assert record["view"] == "thermal"
     assert record["config"]["percent"] == 100
     hashed = {Path(i["path"]).name for i in record["inputs"]}
     assert {"cache.json", "index.jsonl", "test.jsonl"} <= hashed
@@ -560,7 +562,8 @@ def test_size_cells_say_how_many_folds_had_people_of_that_size(tmp_path):
     fake_run(tmp_path, "rgb", "B", 100, 0.4, 0.3)
     summary = head_table.summarise(head_table.collect(tmp_path))
     sizes = summary["rgb"]["100"]["by_size"]
-    assert sizes["tiny"]["n"] == 1 and sizes["small"]["n"] == 2
+    assert sizes["tiny"]["n"] == 1
+    assert sizes["small"]["n"] == 2
     assert sizes["tiny"]["ap_iou25"][0] == pytest.approx(0.4)
     text = head_table.markdown(summary)
     assert "0.400 / 0.300 (n=1)" in text
@@ -584,7 +587,8 @@ def test_the_table_gives_each_fold_and_the_mean_and_spread(tmp_path):
     assert math.isnan(summary["thermal"]["1"]["std"]["ap_iou25"])  # one fold
 
     text = head_table.markdown(summary)
-    assert "ap_iou25" in text and "ap_iou50" in text
+    assert "ap_iou25" in text
+    assert "ap_iou50" in text
     assert "0.300 ± 0.141" in text
 
 
@@ -654,8 +658,10 @@ def test_the_ablation_table_has_each_arm_per_fold_with_spread_and_the_paired_cha
     assert entry["equalise"]["delta"]["ap_iou25"][1] == pytest.approx(0.0, abs=1e-12)
     assert "delta" not in entry["replicate"]
     text = head_table.markdown_arms(summary, head_table.arm_notes(by_arm))
-    assert "| replicate |" in text and "| equalise |" in text
-    assert "0.200 / 0.100" in text and "0.500 / 0.300" in text  # per fold
+    assert "| replicate |" in text
+    assert "| equalise |" in text
+    assert "0.200 / 0.100" in text
+    assert "0.500 / 0.300" in text
     assert "0.400 ± 0.141" in text  # mean and spread of ap_iou25
 
 

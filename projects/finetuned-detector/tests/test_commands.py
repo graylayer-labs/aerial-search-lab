@@ -44,8 +44,10 @@ def test_train_baseline_runs_the_project_experiment(monkeypatch, capsys) -> None
 
     monkeypatch.setattr(experiment, "run_baseline", run_baseline)
     cli.main(["train-baseline", "rgb", "--percent", "10", "--fold", "220109_Baker"])
-    assert seen["fold"] == "220109_Baker" and seen["percent"] == 10
-    assert seen["camera"] == "rgb" and seen["scratch"] is False
+    assert seen["fold"] == "220109_Baker"
+    assert seen["percent"] == 10
+    assert seen["camera"] == "rgb"
+    assert seen["scratch"] is False
     assert '"ok": 1' in capsys.readouterr().out
 
 
@@ -70,8 +72,10 @@ def test_sagemaker_train_launches_with_the_forwarded_flags(monkeypatch, capsys) 
     monkeypatch.setattr(project, "asdict", lambda estimate: {})
     cli.main([*LAUNCH, "--dry-run"])
     assert '"dry_run": true' in capsys.readouterr().out
-    assert seen["baseline_args"][0] == "rgb" and "--fold" in seen["baseline_args"]
-    assert seen["spot"] is True and seen["session_factory"] is cli._aws_session
+    assert seen["baseline_args"][0] == "rgb"
+    assert "--fold" in seen["baseline_args"]
+    assert seen["spot"] is True
+    assert seen["session_factory"] is cli._aws_session
 
 
 def test_the_command_line_has_no_on_demand_flag() -> None:

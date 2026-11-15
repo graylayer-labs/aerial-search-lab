@@ -41,12 +41,15 @@ def test_tiled_input_is_native_pixels_cut_into_the_caches_input_size():
     assert be.input_size("rgb", "tiled") is None
     rgb = be.tile_spec("rgb", be.BaselineRecipe(input="tiled"))
     thermal = be.tile_spec("thermal", be.BaselineRecipe(input="tiled"))
-    assert rgb is not None and rgb.size == (672, 384)
-    assert thermal is not None and thermal.size == (560, 448)
+    assert rgb is not None
+    assert rgb.size == (672, 384)
+    assert thermal is not None
+    assert thermal.size == (560, 448)
     assert be.tile_spec("rgb", be.BaselineRecipe(input="cache")) is None
     custom = be.BaselineRecipe(input="tiled", tile_overlap=200)
     spec = be.tile_spec("rgb", custom)
-    assert spec is not None and spec.overlap == 200
+    assert spec is not None
+    assert spec.overlap == 200
 
 
 def test_training_tiles_hold_clipped_boxes_and_a_share_of_empty_tiles(tmp_path):
@@ -60,10 +63,12 @@ def test_training_tiles_hold_clipped_boxes_and_a_share_of_empty_tiles(tmp_path):
     seen = 0
     for k in range(len(tiles)):
         image, target, scale = tiles[k]
-        assert image.shape == (3, 24, 32) and scale.tolist() == [1.0, 1.0]
+        assert image.shape == (3, 24, 32)
+        assert scale.tolist() == [1.0, 1.0]
         boxes = target["boxes"]
         assert (boxes >= 0).all()
-        assert (boxes[:, [0, 2]] <= 32).all() and (boxes[:, [1, 3]] <= 24).all()
+        assert (boxes[:, [0, 2]] <= 32).all()
+        assert (boxes[:, [1, 3]] <= 24).all()
         seen += len(boxes)
     assert seen >= n_positive
     clear = sum(
@@ -163,7 +168,8 @@ def test_a_tiled_run_scores_whole_frames_on_the_test_site_day(tmp_path, monkeypa
     run_file = tmp_path / "repo" / "outputs" / "scratch-bl-tiled" / "run.json"
     assert json.loads(run_file.read_text())["config"]["tiling"]["overlap"] == 16
     training = json.loads((run_file.parent / "training.json").read_text())
-    assert training["train_boxes"] == 4 and training["train_boxes_unlabelled"] == 0
+    assert training["train_boxes"] == 4
+    assert training["train_boxes_unlabelled"] == 0
 
 
 class Flood(torch.nn.Module):
@@ -194,7 +200,8 @@ def test_boxes_labelled_in_no_tile_are_counted_and_slivers_are_not_negatives(tmp
     write_images(tmp_path, [wide, ok])
     strict = be.TileSpec((32, 24), 16, min_visible=0.6, empty_ratio=2.0)
     tiles = be.TiledTrainSet([wide, ok], tmp_path, strict, seed=0)
-    assert tiles.n_boxes == 2 and tiles.n_unlabelled_boxes == 1
+    assert tiles.n_boxes == 2
+    assert tiles.n_unlabelled_boxes == 1
     empties = 0
     for r, tile, local in tiles.tiles:
         if len(local) == 0:  # an empty negative: it must not touch any box
@@ -213,6 +220,7 @@ def test_empty_tiles_are_sampled_from_the_clear_ones_up_to_the_ratio(tmp_path):
     truth = rc.record_boxes(record)
     n_positive = sum(len(tiling.boxes_in_tile(truth, t, 0.5)[1]) > 0 for t in grid)
     clear = sum(not tiling.touches_box(truth, t) for t in grid)
-    assert n_positive >= 1 and clear > 2 * n_positive
+    assert n_positive >= 1
+    assert clear > 2 * n_positive
     empties = sum(len(local) == 0 for _, _, local in tiles.tiles)
     assert empties == min(int(np.ceil(2.0 * n_positive)), clear)

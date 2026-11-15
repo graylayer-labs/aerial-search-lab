@@ -29,7 +29,7 @@ import random
 import time
 import warnings
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -229,7 +229,7 @@ def check_settings(cache_dir: Path, settings: CacheSettings) -> None:
 
 
 @contextmanager
-def session_lock(cache_dir: Path, session: str) -> Iterator[None]:
+def session_lock(cache_dir: Path, session: str) -> Generator[None, None, None]:
     """One session at a time: the index has no other protection.
 
     Creates `session.lock` exclusively and removes it on exit. A session that
