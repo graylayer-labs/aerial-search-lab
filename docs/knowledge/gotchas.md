@@ -55,3 +55,12 @@ Traps in this repo, and things that look wrong but are right.
 - Cause: on purpose. Renaming the bucket, roles and `project` tag would mean
   new resources and a data copy for no gain.
 - Evidence: #160.
+
+## Golden run pins pass on Linux CI with only a warning
+
+- Golden output pins are exact on macOS only; CI on Linux checks structure.
+  Re-run the golden tests on the Mac before merging a change to experiment
+  code.
+- Cause: training is not bit-reproducible across CPUs; a few steps turn the
+  last bit into a visible loss difference.
+- Evidence: #216.
