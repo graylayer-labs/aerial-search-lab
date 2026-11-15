@@ -29,13 +29,12 @@ from typing import Any
 import numpy as np
 import torch
 import torchvision.transforms.v2.functional as vision
+from aerial_search import runner
 from aerial_search.data import tiling
 from aerial_search.data.records import record_boxes, select_records, subsample
 from aerial_search.evaluation.detection import (
     DetectionReport,
-    GroundTruth,
     Prediction,
-    evaluate_detections,
 )
 from aerial_search.evaluation.predictions import (
     PREDICTIONS_FILENAME,
@@ -362,14 +361,9 @@ class BatchSteps:
         return self.steps - self.start
 
     def __iter__(self):
-        rng = np.random.default_rng(self.seed)
-        order: list[int] = []
-        for step in range(self.steps):
-            if len(order) < self.batch_size:
-                order += rng.permutation(self.n).tolist()
-            if step >= self.start:
-                yield sorted(order[: self.batch_size])
-            del order[: self.batch_size]
+        return runner.batch_order(
+            self.n, self.batch_size, self.steps, self.seed, self.start
+        )
 
 
 # --- checkpoints ------------------------------------------------------------------
@@ -638,51 +632,55 @@ def train_baseline(
     # RNG. An uninterrupted run draws it here at step 0, so a resumed run draws
     # it first and then restores the RNG saved at its step.
     batches = iter(loader)
-    history: dict[str, Any] = {"loss": [], "validation": [], "best_step": None}
-    best, best_state = -math.inf, None
+    selection = runner.Selection()
     if state is not None:
         model.load_state_dict(state["model"])
         optimiser.load_state_dict(state["optimiser"])
         schedule.load_state_dict(state["schedule"])
-        history, best, best_state = state["history"], state["best"], state["best_state"]
+        selection = runner.Selection(
+            state["history"], state["best"], state["best_state"]
+        )
         _set_rng_state(state["rng"])
-    for step, (images, targets, _) in enumerate(batches, start=start + 1):
+
+    def step(number: int, batch) -> float:
+        images, targets, _ = batch
         model.train()
         images = [im.to(device) for im in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         loss = sum(model(images, targets).values())
         if not torch.isfinite(loss):
-            raise FloatingPointError(f"loss {loss.item()} at step {step}")
+            raise FloatingPointError(f"loss {loss.item()} at step {number}")
         optimiser.zero_grad()
         loss.backward()
         optimiser.step()
         schedule.step()
-        history["loss"].append(float(loss.item()))
-        if validate is not None and (
-            step % recipe.eval_every == 0 or step == recipe.steps
-        ):
-            score = validate()
-            history["validation"].append({"step": step, "ap_iou25": score})
-            print(
-                f"step {step}: loss {loss.item():.4f}, val ap_iou25 {score:.4f}",
-                flush=True,
-            )
-            if score > best:
-                best, best_state = score, copy.deepcopy(model.state_dict())
-                history["best_step"] = step
-        if checkpoints and step % checkpoints.every == 0 and step < recipe.steps:
+        return float(loss.item())
+
+    def save(number: int, selection: runner.Selection) -> None:
+        if checkpoints and number % checkpoints.every == 0 and number < recipe.steps:
             checkpoints.save(
                 phase="training",
-                step=step,
+                step=number,
                 model=model.state_dict(),
                 optimiser=optimiser.state_dict(),
                 schedule=schedule.state_dict(),
-                history=history,
-                best=best,
-                best_state=best_state,
+                history=selection.history,
+                best=selection.best,
+                best_state=selection.state,
             )
-    if best_state is not None:
-        model.load_state_dict(best_state)
+
+    history = runner.train_best_step(
+        batches,
+        step,
+        steps=recipe.steps,
+        eval_every=recipe.eval_every,
+        validate=validate,
+        snapshot=lambda: copy.deepcopy(model.state_dict()),
+        restore=model.load_state_dict,
+        selection=selection,
+        start=start,
+        after_step=save,
+    ).history
     if checkpoints:
         checkpoints.save(
             phase="trained",
@@ -840,16 +838,10 @@ def evaluate(
     frame_top_k: int = 100,
 ) -> DetectionReport:
     """Score on a split with the same module and camera/flight grouping as the head."""
-    truths = [
-        GroundTruth(
-            str(r["image"]), record_boxes(r), str(r["camera"]), str(r["collection_id"])
-        )
-        for r in frames.records
-    ]
     predictions = predict(
         model, frames, device, workers=workers, frame_top_k=frame_top_k
     )
-    return evaluate_detections(truths, predictions)
+    return runner.score(frames.records, predictions)
 
 
 # --- one run ----------------------------------------------------------------------
@@ -858,10 +850,8 @@ def evaluate(
 def default_run_name(
     recipe: BaselineRecipe, camera: str, fold: str, percent: int, seed: int
 ):
-    return (
-        f"detection-baseline/{recipe.arch}-{recipe.input}/"
-        f"{camera}-{fold}-{percent}pct-seed{seed}"
-    )
+    prefix = f"detection-baseline/{recipe.arch}-{recipe.input}"
+    return runner.run_name(prefix, camera, fold, percent, seed)
 
 
 def run_baseline(
@@ -945,7 +935,7 @@ def run_baseline(
     try:
         if checkpoints is not None:
             state = checkpoints.load()  # refuses another run's before anything
-        directory = run_module.start_run(
+        with runner.experiment_run(
             run_name or default_run_name(recipe, camera, fold, percent, seed),
             config,
             seed,
@@ -958,8 +948,7 @@ def run_baseline(
             view=camera,
             manifests=manifests,
             data_root=data_root,
-        )
-        try:
+        ) as directory:
             if checkpoints is None:
                 checkpoints = Checkpoints(
                     directory / "checkpoints", identity, checkpoint_every
@@ -1042,18 +1031,12 @@ def run_baseline(
                 history["train_boxes"] = train.n_boxes
                 history["train_boxes_unlabelled"] = train.n_unlabelled_boxes
             history["test_predictions_tied"] = report.overall.n_predictions_tied
-            (directory / "training.json").write_text(
-                json.dumps(history, indent=2, allow_nan=True) + "\n"
-            )
+            runner.write_training(directory, history)
             if checkpoint_dir is None:
                 # Only a stopped run needs it, and it is up to 0.5 GB; the
                 # predictions file stays as the evidence. An explicit
                 # directory (SageMaker's) is left to whoever manages it.
                 checkpoints.path.unlink(missing_ok=True)
-        except BaseException as error:
-            run_module.finish_run(directory, error)
-            raise
-        run_module.finish_run(directory)
     finally:
         if checkpoints is not None:
             checkpoints.unlock()

@@ -20,13 +20,9 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn.functional as functional
+from aerial_search import runner
 from aerial_search.data.records import record_boxes, select_records
-from aerial_search.evaluation.detection import (
-    DetectionReport,
-    GroundTruth,
-    Prediction,
-    evaluate_detections,
-)
+from aerial_search.evaluation.detection import DetectionReport, Prediction
 from numpy.typing import ArrayLike
 
 from frozen_head.feature_cache import (
@@ -452,6 +448,19 @@ class Split:
         }
 
 
+def drop_missing(records: dict[str, list[dict]], missing: list[str]):
+    """Leave out frames the cache lacks: a scratch run only (`check_cache`
+    refuses a normal one)."""
+    if not missing:
+        return records
+    print(f"scratch: {len(missing)} images not in the cache, left out")
+    absent = set(missing)
+    return {
+        role: [r for r in rs if r["image"] not in absent]
+        for role, rs in records.items()
+    }
+
+
 def load_split_features(
     cache_dir: Path,
     records: list[dict],
@@ -504,35 +513,26 @@ def train_head(
         head.parameters(), lr=recipe.learning_rate, weight_decay=recipe.weight_decay
     )
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, recipe.steps)
-    rng = np.random.default_rng(seed)
-    order: list[int] = []
-    history: dict[str, Any] = {"loss": [], "validation": [], "best_step": None}
-    best, best_state = -math.inf, None
-    for step in range(1, recipe.steps + 1):
+
+    def step(_: int, batch: list[int]) -> float:
         head.train()
-        if len(order) < recipe.batch_size:
-            order += rng.permutation(len(split)).tolist()
-        index = np.sort(np.array(order[: recipe.batch_size]))
-        del order[: recipe.batch_size]
-        features, targets = _batch(split, index, device)
+        features, targets = _batch(split, np.array(batch), device)
         loss = centre_loss(head(features), targets)
         optimiser.zero_grad()
         loss.backward()
         optimiser.step()
         schedule.step()
-        history["loss"].append(float(loss.item()))
-        if validate is not None and (
-            step % recipe.eval_every == 0 or step == recipe.steps
-        ):
-            score = validate()
-            history["validation"].append({"step": step, "ap_iou25": score})
-            print(f"step {step}: loss {loss.item():.4f}, val ap_iou25 {score:.4f}")
-            if score > best:  # NaN compares false
-                best, best_state = score, copy.deepcopy(head.state_dict())
-                history["best_step"] = step
-    if best_state is not None:
-        head.load_state_dict(best_state)
-    return history
+        return float(loss.item())
+
+    return runner.train_best_step(
+        runner.batch_order(len(split), recipe.batch_size, recipe.steps, seed),
+        step,
+        steps=recipe.steps,
+        eval_every=recipe.eval_every,
+        validate=validate,
+        snapshot=lambda: copy.deepcopy(head.state_dict()),
+        restore=head.load_state_dict,
+    ).history
 
 
 @torch.no_grad()
@@ -544,24 +544,30 @@ def predict(
     for start in range(0, len(split), batch):
         index = np.arange(start, min(start + batch, len(split)))
         features, _ = _batch(split, index, device)
-        heat, offset, size = (t.cpu().numpy() for t in head(features))
-        for k, n in enumerate(index):
-            boxes, scores = decode(
-                heat[k], offset[k], size[k], split.geometry[n], top_k
-            )
-            out.append(Prediction(str(split.records[n]["image"]), boxes, scores))
+        out += decode_outputs(head(features), split, index, top_k)
     return out
+
+
+def decode_outputs(outputs, split: Split, index, top_k: int) -> list[Prediction]:
+    """The head's outputs for frames `index` of `split`, decoded to boxes."""
+    heat, offset, size = (t.cpu().numpy() for t in outputs)
+    return [
+        Prediction(
+            str(split.records[n]["image"]),
+            *decode(heat[k], offset[k], size[k], split.geometry[n], top_k),
+        )
+        for k, n in enumerate(index)
+    ]
 
 
 def evaluate(
     head: CentreHead, split: Split, device: torch.device, top_k: int
 ) -> DetectionReport:
     """Score the head on a split through the evaluation module."""
-    truths = [
-        GroundTruth(str(r["image"]), b, split.camera, str(r["collection_id"]))
-        for r, b in zip(split.records, split.boxes, strict=True)
-    ]
-    return evaluate_detections(truths, predict(head, split, device, top_k))
+    predictions = predict(head, split, device, top_k)
+    return runner.score(
+        split.records, predictions, boxes=split.boxes, camera=split.camera
+    )
 
 
 # --- one run -------------------------------------------------------------------
@@ -576,10 +582,8 @@ def default_run_name(
     warm: bool = False,
 ):
     suffix = "-warm" if warm else ""
-    return (
-        f"detection-head/{cache_dir.name}{suffix}/"
-        f"{camera}-{fold}-{percent}pct-seed{seed}"
-    )
+    prefix = f"detection-head/{cache_dir.name}{suffix}"
+    return runner.run_name(prefix, camera, fold, percent, seed)
 
 
 def build_head(seed: int, dim: int, recipe: Recipe) -> CentreHead:
@@ -626,7 +630,6 @@ def run_head(
     (a warm start, for the matched control of the stem arm; see
     `load_warm_start`). It is recorded in `config.warm_start`.
     """
-    from aerial_search import run as run_module
     from aerial_search.data import checksums
 
     paths, records = select_records(manifests, fold, camera, percent)
@@ -644,13 +647,7 @@ def run_head(
             f"{cache_dir} holds {arm!r} features, not {input_handling!r}; use the "
             "cache made with that input handling"
         )
-    if cache.missing:  # a scratch run only; check_cache refuses a normal one
-        print(f"scratch: {len(cache.missing)} images not in the cache, left out")
-        absent = set(cache.missing)
-        records = {
-            role: [r for r in rs if r["image"] not in absent]
-            for role, rs in records.items()
-        }
+    records = drop_missing(records, cache.missing)
     warm, warm_record = None, {}
     if init_head is not None:
         if arm != DEFAULT_ARM:
@@ -684,7 +681,7 @@ def run_head(
         "head": "CentreHead: LayerNorm, conv1x1, GELU, conv3x3, GELU, conv1x1, "
         "pixel shuffle; CenterNet focal + L1 offset + L1 log size",
     }
-    directory = run_module.start_run(
+    with runner.experiment_run(
         run_name
         or default_run_name(cache_dir, camera, fold, percent, seed, warm is not None),
         config,
@@ -703,8 +700,7 @@ def run_head(
         view=camera,
         manifests=manifests,
         data_root=data_root,
-    )
-    try:
+    ) as directory:
         splits = {
             role: load_split_features(
                 cache_dir, rs, cache.entries, camera, recipe.upsample
@@ -725,7 +721,7 @@ def run_head(
         )
         report = evaluate(head, splits["test"], device, recipe.top_k)
         report.write_json(directory)
-        torch.save(head.state_dict(), directory / "head.pt")
+        runner.save_weights(directory, "head", head)
         history["targets_lost_to_shared_subcells"] = {
             role: s.lost for role, s in splits.items()
         }
@@ -734,13 +730,7 @@ def run_head(
         # 3x3 peak test must lose (see Crowding)
         history["crowding"] = {role: s.crowding() for role, s in splits.items()}
         history["test_predictions_tied"] = report.overall.n_predictions_tied
-        (directory / "training.json").write_text(
-            json.dumps(history, indent=2, allow_nan=True) + "\n"
-        )
-    except BaseException as error:
-        run_module.finish_run(directory, error)
-        raise
-    run_module.finish_run(directory)
+        runner.write_training(directory, history)
     test = report.overall.to_dict()
     return {
         "run": str(directory),
