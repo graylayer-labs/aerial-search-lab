@@ -3,7 +3,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 from aerial_search.data import checksums, wisard
 from aerial_search.data.wisard import (
     WISARD_COLLECTIONS,

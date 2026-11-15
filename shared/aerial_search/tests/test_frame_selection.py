@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from aerial_search.data import records as rc
 
 

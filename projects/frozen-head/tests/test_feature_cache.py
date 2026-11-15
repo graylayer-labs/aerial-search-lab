@@ -5,15 +5,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from frozen_head import feature_cache as fc
+from frozen_head.backbone import Extraction, NaflexExtractor, pool2
 from PIL import Image
 from transformers.models.siglip2 import (
     Siglip2ImageProcessor,
     Siglip2VisionConfig,
     Siglip2VisionModel,
 )
-
-from frozen_head import feature_cache as fc
-from frozen_head.backbone import Extraction, NaflexExtractor, pool2
 
 SETTINGS = fc.CacheSettings(
     model="fake",

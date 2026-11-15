@@ -8,10 +8,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from PIL import Image
-
 from aerial_search.data import records as rc
 from finetuned_detector import experiment as be
+from PIL import Image
 
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
 MANIFESTS = Path("data/manifests/wisard-full")

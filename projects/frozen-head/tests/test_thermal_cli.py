@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from aerial_search import cli
 from frozen_head import cli as project
 

@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from aerial_search.cli import build_parser
 
 
@@ -83,7 +82,6 @@ def test_experiment_commands_accept_scratch_flag() -> None:
 
 def test_experiment_refuses_to_start_outside_a_git_repo(tmp_path, monkeypatch) -> None:
     import pytest
-
     from aerial_search.cli import main
 
     monkeypatch.chdir(tmp_path)
@@ -136,7 +134,6 @@ def test_output_option_is_gone() -> None:
 
 def test_detector_calls_start_run_before_training(monkeypatch) -> None:
     import pytest
-
     from aerial_search import cli
     from aerial_search import run as run_module
     from aerial_search.experiments import detection_experiment
@@ -205,7 +202,6 @@ def test_failed_experiment_is_marked_failed(tmp_path, monkeypatch) -> None:
     import json
 
     import pytest
-
     from aerial_search import cli
     from aerial_search.experiments import ssl_experiment
 
@@ -271,7 +267,6 @@ def test_detector_refuses_a_checkpoint_pretrained_in_another_fold(
     import json
 
     import pytest
-
     from aerial_search import cli
     from aerial_search.experiments import detection_experiment
 

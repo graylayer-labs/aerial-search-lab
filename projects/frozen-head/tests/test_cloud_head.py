@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from aerial_search import cli
 from aerial_search.cloud import launcher
 from frozen_head import cli as project

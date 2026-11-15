@@ -21,7 +21,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from aerial_search.evaluation.detection import (
     GroundTruth,
     Prediction,

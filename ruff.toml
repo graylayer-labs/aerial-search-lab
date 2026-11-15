@@ -1,0 +1,34 @@
+# Standard ruff config for Python repos in every account
+# (reference/repo-standard.md). Copy it to the repo root unchanged; ruff.toml
+# wins over any [tool.ruff] in pyproject.toml, so keep that table out.
+#
+# No suppressions: agents never add `# noqa`, per-file-ignores, ignore or
+# extend-ignore entries (hooks/suppression-guard.sh). A rule that is wrong for
+# a repo is the owner's call.
+
+line-length = 88
+# Match the repo's requires-python (the standard is >= 3.12).
+target-version = "py312"
+
+[lint]
+select = [
+    "E4", "E7", "E9", # pycodestyle errors: imports, statements, syntax. Line length is the formatter's job, so E501 stays off.
+    "W",   # pycodestyle warnings: trailing whitespace, invalid escape sequences
+    "F",   # pyflakes: unused imports and names, undefined names
+    "I",   # isort: one import order everywhere, auto-fixed
+    "N",   # pep8-naming, with the ML names allowed below
+    "B",   # bugbear: mutable defaults, loop-variable closures, silent excepts
+    "C4",  # comprehensions: simpler list, dict and set building
+    "UP",  # pyupgrade: modern syntax for the target version
+    "SIM", # simplify: needless branches and nesting
+    "PIE", # misc: redundant pass, duplicate class fields
+    "PT",  # pytest style: tests use pytest
+    "PGH", # pygrep-hooks: no blanket `type: ignore`, no eval
+    "ICN", # import conventions: np, pd, plt as everyone writes them
+    "NPY", # numpy: legacy random API, deprecated aliases
+    "RUF", # ruff's own: unused noqa, mutable class defaults, ambiguous unicode
+]
+
+[lint.pep8-naming]
+# Maths and ML names: X, y, X_train, single-letter shapes (B, T, C, H, W).
+extend-ignore-names = ["?", "X_*", "Y_*"]

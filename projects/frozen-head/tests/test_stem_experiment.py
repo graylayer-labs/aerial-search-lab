@@ -6,16 +6,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from frozen_head import stem_experiment as se
+from frozen_head.backbone import SPECS
+from frozen_head.feature_cache import CacheError
 from PIL import Image
 from transformers.models.siglip2 import (
     Siglip2ImageProcessor,
     Siglip2VisionConfig,
     Siglip2VisionModel,
 )
-
-from frozen_head import stem_experiment as se
-from frozen_head.backbone import SPECS
-from frozen_head.feature_cache import CacheError
 
 SPEC = SPECS["siglip2-base-naflex"]
 FOLD, OTHER = "220109_Baker", "210417_MtErie"
@@ -243,9 +242,8 @@ def test_weights_that_are_not_the_caches_are_refused(tmp_path):
 
 def test_accumulated_micro_batches_equal_the_full_batch_loss_and_gradients():
     """People spread unevenly (0, 2, 10, 20) across four micro-batches."""
-    from torch import nn
-
     from frozen_head.head import centre_loss
+    from torch import nn
 
     torch.manual_seed(0)
     n, h, w = 4, 6, 8

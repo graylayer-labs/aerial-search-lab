@@ -533,6 +533,7 @@ def cache_features(
     from aerial_search import run as run_module
     from aerial_search.data import checksums
     from aerial_search.models.components import get_device
+
     from frozen_head import backbone
 
     if limit and not scratch:
@@ -632,9 +633,9 @@ def cache_features(
 
 def _load_naflex(model: str) -> Callable[..., Extractor]:
     def load(token_budget: int, pooling: int, transform=None) -> Extractor:
+        from aerial_search.models.components import get_device
         from transformers import AutoImageProcessor
 
-        from aerial_search.models.components import get_device
         from frozen_head import backbone
 
         spec = backbone.SPECS[model]

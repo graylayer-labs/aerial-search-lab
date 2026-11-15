@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from aerial_search import REPO_ROOT, cli
 from aerial_search.cloud import entry, launcher
 from finetuned_detector import cli as project

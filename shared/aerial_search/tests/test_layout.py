@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from aerial_search import run
 from aerial_search.cloud import entry, source
 from aerial_search.data import checksums
