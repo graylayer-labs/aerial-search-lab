@@ -62,7 +62,8 @@ def setup(tmp_path: Path, input_handling: str | None = None, grid_shift: int = 0
         for k in range(n):
             grey = rng.integers(0, 255, (SIZE[1], SIZE[0]), dtype=np.uint8)
             rgb = np.stack([grey] * 3, axis=-1)
-            x, y = rng.uniform(0.2, 0.8, 2)
+            # rounded: the last bit of a uniform draw differs between platforms
+            x, y = (round(float(v), 6) for v in rng.uniform(0.2, 0.8, 2))
             person = [{"x_center": x, "y_center": y, "width": 0.05, "height": 0.08}]
             rec = record(site, str(k), person if k % 2 else [])
             (raw / rec["image"]).parent.mkdir(parents=True, exist_ok=True)
@@ -413,3 +414,33 @@ def test_a_warm_start_from_other_manifests_is_refused(tmp_path):
 
     with pytest.raises(CacheError, match="manifests differ"):
         run(tmp_path, cache, tiny_tower(), init_head=init)
+
+
+TIMINGS = ("step_seconds", "validation_seconds", "test_seconds")
+
+
+def test_a_stem_run_writes_exactly_the_pinned_outputs(tmp_path, golden):
+    """Pins run.json, training.json (timings aside), the report and weights (#216)."""
+    cache = setup(tmp_path)
+
+    summary = run(tmp_path, cache, tiny_tower(), learning_rate=0.01)
+
+    directory = Path(summary["run"])
+    training = golden.read_json(directory / "training.json")
+    golden.check(
+        "stem-run",
+        {
+            "files": sorted(p.name for p in directory.iterdir()),
+            "run.json": golden.run_record(directory),
+            "training.json": {k: v for k, v in training.items() if k not in TIMINGS},
+            "timings": {k: type(training[k]).__name__ for k in TIMINGS},
+            "detection_metrics.json": golden.read_json(
+                directory / "detection_metrics.json"
+            ),
+            "head.pt": golden.weights(torch.load(directory / "head.pt")),
+            "stem.pt": golden.weights(torch.load(directory / "stem.pt")),
+            "summary": sorted(summary),
+            "best_step": summary["best_step"],
+            "test": summary["test"],
+        },
+    )
