@@ -64,3 +64,10 @@ Traps in this repo, and things that look wrong but are right.
 - Cause: training is not bit-reproducible across CPUs; a few steps turn the
   last bit into a visible loss difference.
 - Evidence: #216.
+- Coverage per platform (#247): on macOS the pins are exact, including the
+  seeded torch RNG state in `checkpoint.pt` and the weight digests. On Linux
+  CI only the structure is compared (keys, lengths, types, strings,
+  integers), because floats differ across CPUs. The baseline cases score test
+  AP 0 (an untrained tiny detector), so only their validation AP and
+  best-step selection are meaningful; the head and stem runs also pin a
+  non-zero test AP.
