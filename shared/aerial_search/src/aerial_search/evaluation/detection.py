@@ -292,6 +292,7 @@ class _Scorer:
         results = {}
         for a, (name, (low, high)) in enumerate(buckets.items()):
             ap = []
+            recall: dict[float, float] = {}  # always replaced: `primary` is in the loop
             for t in range(len(IOU_THRESHOLDS)):
                 scores, hits, n_people = _matches(ev, a, t)
                 ap.append(_average_precision(scores, hits, n_people))
@@ -423,7 +424,7 @@ def _recall_at_fppi(
     scoring >= c, so equal scores always enter together.
     """
     if n_people == 0:
-        return {f: math.nan for f in FPPI_POINTS}
+        return dict.fromkeys(FPPI_POINTS, math.nan)
     cutoffs = np.unique(np.concatenate([hit_scores, false_alarm_scores]))
     hits = len(hit_scores) - np.searchsorted(np.sort(hit_scores), cutoffs, "left")
     false_alarms = len(false_alarm_scores) - np.searchsorted(

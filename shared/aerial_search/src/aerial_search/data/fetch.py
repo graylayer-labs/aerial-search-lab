@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -117,11 +118,14 @@ def _download_resumable(source: DatasetSource, destination: Path) -> None:
 
     _check_disk_space(source, destination)
 
+    if urllib.parse.urlsplit(source.url).scheme != "https":
+        raise ValueError(f"Refusing a non-https download URL: {source.url}")
+
     request = urllib.request.Request(source.url)
     if current_bytes:
         request.add_header("Range", f"bytes={current_bytes}-")
 
-    with urllib.request.urlopen(request) as response:  # noqa: S310
+    with urllib.request.urlopen(request) as response:
         resumed = current_bytes > 0 and response.status == 206
         mode = "ab" if resumed else "wb"
         with destination.open(mode) as output:

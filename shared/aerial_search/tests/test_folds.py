@@ -1,5 +1,6 @@
 """Leave-one-site-day-out folds: nothing of a test site-day reaches training."""
 
+import itertools
 import json
 import re
 from collections import Counter
@@ -264,7 +265,7 @@ def test_label_fractions_are_nested_contiguous_and_reproducible(
                 ]
                 for p in PERCENTS
             ]
-            for smaller, larger in zip(subsets, subsets[1:], strict=False):
+            for smaller, larger in itertools.pairwise(subsets):
                 assert set(smaller) <= set(larger), (fold, view)
             full = len(subsets[-1])
             for percent, subset in zip(PERCENTS[:-1], subsets, strict=False):
@@ -275,9 +276,7 @@ def test_label_fractions_are_nested_contiguous_and_reproducible(
     assert len(one) == BLOCK_FRAMES * 2
     frames = sorted(_where(r["rgb_image"]) for r in one)
     runs = sum(
-        1
-        for a, b in zip(frames, frames[1:], strict=False)
-        if a[0] != b[0] or b[1] != a[1] + 1
+        1 for a, b in itertools.pairwise(frames) if a[0] != b[0] or b[1] != a[1] + 1
     )
     assert runs <= 1
 
@@ -516,7 +515,7 @@ def test_override_frames_land_only_in_the_pool(tmp_path: Path) -> None:
 
 
 def test_override_leaves_other_frames_and_the_rgb_view_alone(tmp_path: Path) -> None:
-    manifests, destination, _, emptied = _build_with_override(tmp_path)
+    _manifests, destination, _, emptied = _build_with_override(tmp_path)
     plain = tmp_path / "plain"
     plain.mkdir()
     base, collections = _dataset(plain)

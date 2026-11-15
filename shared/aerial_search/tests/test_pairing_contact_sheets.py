@@ -8,7 +8,8 @@ TOOL = Path(__file__).resolve().parents[3] / "tools" / "pairing_contact_sheets.p
 
 def _tool():
     spec = importlib.util.spec_from_file_location("pairing_contact_sheets", TOOL)
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

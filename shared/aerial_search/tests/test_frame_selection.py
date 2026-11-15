@@ -44,7 +44,8 @@ def test_select_records_reads_the_fractions_train_file_and_both_other_splits(tmp
     paths, records = rc.select_records(manifests, "220109_Baker", "rgb", 5)
     assert paths["train"].name == "train_5pct.jsonl"
     assert [r["image"].split("/")[1] for r in records["train"]] == ["a.jpg", "b.jpg"]
-    assert len(records["validation"]) == 2 and len(records["test"]) == 1
+    assert len(records["validation"]) == 2
+    assert len(records["test"]) == 1
 
 
 def test_select_records_still_refuses_a_leaking_manifest(tmp_path):

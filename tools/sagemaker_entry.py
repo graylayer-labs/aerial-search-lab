@@ -9,9 +9,14 @@ import sys
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1] / "shared" / "aerial_search" / "src"
-sys.path.insert(0, str(SOURCE))
 
-from aerial_search.cloud import entry  # noqa: E402
+
+def main() -> None:
+    sys.path.insert(0, str(SOURCE))
+    from aerial_search.cloud import entry
+
+    entry.main()
+
 
 if __name__ == "__main__":
-    entry.main()
+    main()

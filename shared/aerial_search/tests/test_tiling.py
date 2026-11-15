@@ -1,5 +1,7 @@
 """Tiling (#96): the grid covers the frame, boxes round-trip, overlaps merge."""
 
+import itertools
+
 import numpy as np
 import pytest
 
@@ -7,9 +9,10 @@ from aerial_search.data import tiling
 
 
 @pytest.mark.parametrize(
-    "width,height,tile,overlap",
-    [(1920, 1080, (672, 384), 160), (3840, 2160, (672, 384), 160)]
-    + [
+    ("width", "height", "tile", "overlap"),
+    [
+        (1920, 1080, (672, 384), 160),
+        (3840, 2160, (672, 384), 160),
         (640, 512, (560, 448), 96),
         (700, 400, (672, 384), 0),
         (672, 384, (672, 384), 160),
@@ -21,13 +24,14 @@ def test_grid_covers_every_pixel_including_right_and_bottom_edges(
     tiles = tiling.tile_grid(width, height, tile, overlap)
     covered = np.zeros((height, width), dtype=bool)
     for x0, y0, x1, y1 in tiles:
-        assert 0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height
+        assert 0 <= x0 < x1 <= width
+        assert 0 <= y0 < y1 <= height
         assert (x1 - x0, y1 - y0) == tile
         covered[y0:y1, x0:x1] = True
     assert covered.all()
     # Adjacent tiles overlap by at least `overlap` (the last one by more).
     xs = sorted({t[0] for t in tiles})
-    assert all(b - a <= tile[0] - overlap for a, b in zip(xs, xs[1:], strict=False))
+    assert all(b - a <= tile[0] - overlap for a, b in itertools.pairwise(xs))
 
 
 def test_grid_for_a_frame_smaller_than_a_tile_is_the_whole_frame():
@@ -35,7 +39,7 @@ def test_grid_for_a_frame_smaller_than_a_tile_is_the_whole_frame():
 
 
 def test_overlap_must_be_smaller_than_the_tile():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="overlap"):
         tiling.tile_grid(1920, 1080, (672, 384), 384)
 
 
@@ -87,7 +91,8 @@ def test_two_adjacent_people_are_not_merged():
 
 def test_merging_nothing_gives_nothing():
     merged, scores = tiling.merge_detections(np.zeros((0, 4)), np.zeros(0), iou=0.5)
-    assert merged.shape == (0, 4) and scores.shape == (0,)
+    assert merged.shape == (0, 4)
+    assert scores.shape == (0,)
 
 
 def test_empty_tiles_are_subsampled_to_a_ratio_of_the_positive_tiles():
@@ -111,7 +116,8 @@ def test_a_tile_touching_a_box_is_never_an_empty_negative():
         picks = tiling.pick_tiles(
             has_person, empty_ratio=3.0, seed=seed, touches_person=touches
         )
-        assert 1 not in picks and 5 not in picks
+        assert 1 not in picks
+        assert 5 not in picks
         assert picks == [0, 2, 3, 4]
 
 

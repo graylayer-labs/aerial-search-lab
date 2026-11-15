@@ -239,7 +239,7 @@ def test_rejects_file_from_another_clip(tmp_path: Path) -> None:
         _sample(thermal, number)
     _touch(thermal / "flight_IR_0004_00000041.jpg")  # a frame of clip 0004
 
-    with pytest.raises(ValueError, match="flight_IR_0004_00000041.jpg"):
+    with pytest.raises(ValueError, match=r"flight_IR_0004_00000041.jpg"):
         load_pairs(tmp_path, collections=FLIGHT, labelled_only=False)
 
 
@@ -259,7 +259,7 @@ def test_rejects_image_without_frame_number(tmp_path: Path) -> None:
     _sample(thermal, 0)
     _touch(thermal / "thumbnail.jpg")
 
-    with pytest.raises(ValueError, match="thumbnail.jpg"):
+    with pytest.raises(ValueError, match=r"thumbnail.jpg"):
         load_pairs(tmp_path, collections=FLIGHT, labelled_only=False)
 
 
@@ -354,7 +354,7 @@ def test_rejects_a_label_value_that_is_not_finite(tmp_path: Path, value: str) ->
     labels = tmp_path / "labels.txt"
     labels.write_text(f"0 0.5 0.5 {value} 0.2\n")
 
-    with pytest.raises(ValueError, match="labels.txt:1"):
+    with pytest.raises(ValueError, match=r"labels.txt:1"):
         load_boxes(labels)
 
 
@@ -511,11 +511,11 @@ def test_frames_by_index_checks_clip_number(tmp_path: Path) -> None:
 def test_a_clip_number_must_stand_alone_in_a_file_name(tmp_path: Path) -> None:
     # 0583 sits inside the longer numbers 10583 and 05831.
     _touch(tmp_path / "DJI_10583_00000.jpg")
-    with pytest.raises(ValueError, match="DJI_10583_00000.jpg"):
+    with pytest.raises(ValueError, match=r"DJI_10583_00000.jpg"):
         _frames_by_index(tmp_path, clip="0583")
     (tmp_path / "DJI_10583_00000.jpg").unlink()
     _touch(tmp_path / "DJI_05831_00000.jpg")
-    with pytest.raises(ValueError, match="DJI_05831_00000.jpg"):
+    with pytest.raises(ValueError, match=r"DJI_05831_00000.jpg"):
         _frames_by_index(tmp_path, clip="0583")
 
 
@@ -619,7 +619,8 @@ def test_scratch_prepare_may_skip_verification(tmp_path: Path) -> None:
         verify=False,
     )
     data = json.loads((out / "data_quality.json").read_text())["data"]
-    assert data["verified"] is False and data["root_hash"] is None
+    assert data["verified"] is False
+    assert data["root_hash"] is None
 
 
 def test_scratch_prepare_does_not_overwrite_quotable_manifests(tmp_path: Path) -> None:

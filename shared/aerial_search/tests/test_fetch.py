@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from aerial_search.data.fetch import _validate_member_paths
+from aerial_search.data.fetch import (
+    DatasetSource,
+    _download_resumable,
+    _validate_member_paths,
+)
 
 
 def test_rejects_archive_path_traversal(tmp_path: Path) -> None:
@@ -26,3 +30,14 @@ def test_accepts_archive_member_below_destination(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(archive_path) as archive:
         _validate_member_paths(archive, destination)
+
+
+def test_resumable_download_refuses_a_non_https_url(tmp_path: Path) -> None:
+    source = DatasetSource(
+        name="x",
+        url="file:///etc/passwd",
+        filename="x.zip",
+        expected_bytes=None,
+    )
+    with pytest.raises(ValueError, match="https"):
+        _download_resumable(source, tmp_path / "x.zip")
