@@ -42,8 +42,8 @@ conversations.
      progress with no branch.
 7. Pick the next issue and say which one and why. Tasks the epic marks as
    independent may run in parallel, up to two agents at a time. Start on it unless it is
-   labelled `needs-owner` or falls under "Ask the owner first" in
-   `CLAUDE.md`. Its `agent:` label names the model; `implementer` runs it with
+   labelled `needs-owner` or needs a step the walls in `CLAUDE.md` reserve to
+   the owner. Its `agent:` label names the model; `implementer` runs it with
    that model (`~/.claude/rules/kitchen.md`).
 8. Check that the task's data is reachable before starting. See "Data" in
    `CLAUDE.md` and `docs/knowledge/gotchas.md`.
