@@ -458,6 +458,11 @@ def compact(value):
     }
 
 
+def rng_layout(rng: dict, golden) -> dict:
+    """Keys of the saved RNG state; the seeded torch state in full."""
+    return {"keys": sorted(rng), "torch": golden.weights(rng["torch"])}
+
+
 @pytest.mark.parametrize("mode", ["native", "tiled"])
 def test_a_baseline_run_writes_exactly_the_pinned_outputs(
     tmp_path, monkeypatch, golden, mode
@@ -515,9 +520,11 @@ def test_a_baseline_run_writes_exactly_the_pinned_outputs(
                 .splitlines()
             ],
             "saves": saves,
-            # the global python and numpy RNGs are unseeded: only their layout
+            # the global python and numpy RNGs are unseeded: only their layout.
+            # The torch RNG is seeded, so its state is pinned by value.
             "checkpoint.pt": {
-                k: sorted(v) if k == "rng" else compact(v) for k, v in stored.items()
+                k: rng_layout(v, golden) if k == "rng" else compact(v)
+                for k, v in stored.items()
             },
             "attempts": json.loads((checkpoints / ck.ATTEMPTS_FILENAME).read_text()),
             "summary": {k: v for k, v in summary.items() if k != "run"},
